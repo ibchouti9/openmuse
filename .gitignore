@@ -1,0 +1,7 @@
+node_modules/
+dist/
+electron/dist/
+*.log
+*.dmg
+*.zip
+.DS_Store

@@ -1,0 +1,14 @@
+{
+  "name": "openmuse",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pretty open-source UI for Muse Code (desktop now, phone-ready)",
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix web install",
+    "dev:server": "node server/src/index.js",
+    "dev:web": "npm --prefix web run dev",
+    "build": "npm --prefix web run build",
+    "start": "node server/src/index.js",
+    "dist": "npm run build && npm --prefix electron install --no-audit --no-fund && npm --prefix electron run dist"
+  }
+}

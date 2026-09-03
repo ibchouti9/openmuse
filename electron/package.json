@@ -1,0 +1,48 @@
+{
+  "name": "openmuse-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "dist": "electron-builder --mac dmg zip --arm64 --x64"
+  },
+  "devDependencies": {
+    "electron": "^36.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.openmuse.app",
+    "productName": "OpenMuse",
+    "files": [
+      {
+        "from": ".",
+        "filter": ["main.js", "preload.js", "package.json"]
+      },
+      {
+        "from": "../server/src",
+        "to": "server/src"
+      },
+      {
+        "from": "../server",
+        "filter": ["package.json"],
+        "to": "server"
+      },
+      {
+        "from": "../server/node_modules",
+        "to": "server/node_modules"
+      },
+      {
+        "from": "../web/dist",
+        "to": "web/dist"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "identity": null
+    },
+    "directories": {
+      "output": "dist"
+    }
+  }
+}

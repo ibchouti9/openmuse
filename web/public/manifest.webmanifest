@@ -1,0 +1,10 @@
+{
+  "name": "OpenMuse",
+  "short_name": "OpenMuse",
+  "description": "Pretty open-source UI for Muse Code",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0e14",
+  "theme_color": "#0a0e14",
+  "icons": []
+}
