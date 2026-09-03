@@ -179,11 +179,13 @@ class MspHost extends EventEmitter {
   }
 
   // ---- convenience wrappers (names match the MSP method index) ----
-  sessionStart({ modelId, approvalMode, workspaceRoot } = {}) {
+  sessionStart({ modelId, approvalMode, workspaceRoot, providerId = null, sessionId = null } = {}) {
     const params = { commandId: uuidv7() };
     if (modelId) params.modelId = modelId;
     if (approvalMode) params.approvalMode = approvalMode;
     if (workspaceRoot) params.workspaceRoot = workspaceRoot;
+    if (providerId) params.providerId = providerId;
+    if (sessionId) params.sessionId = sessionId;
     return this.request("session/start", params);
   }
   sessionList({ limit = 50, cursor = null } = {}) {
@@ -192,12 +194,22 @@ class MspHost extends EventEmitter {
   sessionResume(sessionId) {
     return this.request("session/resume", { commandId: uuidv7(), sessionId });
   }
-  turnStart(sessionId, text, { reasoningEffort } = {}) {
+  turnStart(sessionId, text, { reasoningEffort, images = [] } = {}) {
+    const parts = text ? [{ type: "text", text }] : [];
+    for (const img of images) {
+      const part = { type: "image", mediaType: img.mediaType, base64Data: img.base64Data };
+      if (img.width && img.height) {
+        part.width = img.width;
+        part.height = img.height;
+      }
+      parts.push(part);
+    }
+    const base = text || `${images.length} image${images.length === 1 ? "" : "s"} attached`;
     const params = {
       commandId: uuidv7(),
       sessionId,
-      displayText: text,
-      input: [{ type: "text", text }],
+      displayText: text && images.length ? `${text} [+${images.length} image${images.length === 1 ? "" : "s"}]` : base,
+      input: parts,
     };
     if (reasoningEffort) params.reasoningEffort = reasoningEffort;
     return this.request("turn/start", params);
@@ -240,6 +252,74 @@ class MspHost extends EventEmitter {
   }
   setApprovalMode(sessionId, mode) {
     return this.request("session/setApprovalMode", { commandId: uuidv7(), sessionId, mode });
+  }
+  approvalListPending(sessionId) {
+    return this.request("approval/listPending", { sessionId });
+  }
+  sessionRead(sessionId, { excludeItems = true } = {}) {
+    return this.request("session/read", { sessionId, excludeItems });
+  }
+  sessionFork(sessionId, { cutPoint = null, excludeItems = true } = {}) {
+    const params = { commandId: uuidv7(), sessionId, excludeItems };
+    if (cutPoint) params.cutPoint = cutPoint;
+    return this.request("session/fork", params);
+  }
+  sessionCompact(sessionId, { turnId = null } = {}) {
+    const params = { commandId: uuidv7(), sessionId };
+    if (turnId) params.turnId = turnId;
+    return this.request("session/compact", params);
+  }
+  sessionUserShell(sessionId, commandText) {
+    return this.request("session/userShell", { commandId: uuidv7(), sessionId, commandText });
+  }
+  turnSteer(sessionId, expectedTurnId, text, { reasoningEffort = null } = {}) {
+    const params = { commandId: uuidv7(), sessionId, expectedTurnId, input: [{ type: "text", text }] };
+    if (reasoningEffort) params.reasoningEffort = reasoningEffort;
+    return this.request("turn/steer", params);
+  }
+  turnUnqueue(sessionId, turnId) {
+    return this.request("turn/unqueue", { commandId: uuidv7(), sessionId, turnId });
+  }
+  userInputClarify({ sessionId, userInputId, text }) {
+    return this.request("userInput/clarify", {
+      commandId: uuidv7(),
+      sessionId,
+      userInputId,
+      clarification: { format: "text", content: String(text || "").slice(0, 500) },
+    });
+  }
+  viewUnsubscribe(sessionId) {
+    return this.request("view/unsubscribe", { sessionId });
+  }
+  subagentSendMessage(sessionId, subagentId, body) {
+    return this.request("subagent/sendMessage", { commandId: uuidv7(), sessionId, subagentId, body });
+  }
+  subagentFollowupTask(sessionId, subagentId, body) {
+    return this.request("subagent/followupTask", { commandId: uuidv7(), sessionId, subagentId, body });
+  }
+  subagentReadResult(sessionId, subagentId) {
+    return this.request("subagent/readResult", { commandId: uuidv7(), sessionId, subagentId });
+  }
+  subagentStop(sessionId, subagentId, reason = null) {
+    const params = { commandId: uuidv7(), sessionId, subagentId };
+    if (reason) params.reason = reason;
+    return this.request("subagent/stop", params);
+  }
+  subagentClose(sessionId, subagentId, reason = null) {
+    const params = { commandId: uuidv7(), sessionId, subagentId };
+    if (reason) params.reason = reason;
+    return this.request("subagent/close", params);
+  }
+  subagentInterrupt(sessionId, subagentId, reason = null) {
+    const params = { commandId: uuidv7(), sessionId, subagentId };
+    if (reason) params.reason = reason;
+    return this.request("subagent/interrupt", params);
+  }
+  subagentReopen(sessionId, subagentId) {
+    return this.request("subagent/reopen", { commandId: uuidv7(), sessionId, subagentId });
+  }
+  subagentResume(sessionId, subagentId) {
+    return this.request("subagent/resume", { commandId: uuidv7(), sessionId, subagentId });
   }
 }
 

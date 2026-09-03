@@ -129,6 +129,62 @@ class MockHost extends EventEmitter {
   async setApprovalMode() {
     return { status: "accepted" };
   }
+  async approvalListPending() {
+    return { approvals: [], userInputs: [] };
+  }
+  async sessionRead(sessionId) {
+    return { session: this.sessions.find((s) => s.sessionId === sessionId) || { sessionId }, history: { mode: "inline", items: this.histories[sessionId] || [] } };
+  }
+  async sessionFork(sessionId) {
+    const src = this.sessions.find((s) => s.sessionId === sessionId);
+    const session = { sessionId: sid(), title: src ? `Fork of ${src.title || src.sessionId}` : "Mock fork", createdAt: now(), updatedAt: now() };
+    this.sessions.unshift(session);
+    this.histories[session.sessionId] = [...(this.histories[sessionId] || [])];
+    return { session };
+  }
+  async sessionCompact() {
+    return { status: "accepted" };
+  }
+  async sessionUserShell(sessionId, commandText) {
+    return { status: "accepted", output: `mock ran: ${commandText || ""}`.slice(0, 2000) };
+  }
+  async turnSteer() {
+    return { status: "accepted" };
+  }
+  async turnUnqueue() {
+    return { status: "accepted" };
+  }
+  async userInputClarify({ sessionId, userInputId }) {
+    this.emit("notification", { method: "userInput/settled", params: { sessionId, userInputId } });
+    return { status: "accepted" };
+  }
+  async viewUnsubscribe() {
+    return { status: "accepted" };
+  }
+  async subagentSendMessage() {
+    return { status: "accepted" };
+  }
+  async subagentFollowupTask() {
+    return { status: "accepted" };
+  }
+  async subagentReadResult() {
+    return { status: "accepted", result: null };
+  }
+  async subagentStop() {
+    return { status: "accepted" };
+  }
+  async subagentClose() {
+    return { status: "accepted" };
+  }
+  async subagentInterrupt() {
+    return { status: "accepted" };
+  }
+  async subagentReopen() {
+    return { status: "accepted" };
+  }
+  async subagentResume() {
+    return { status: "accepted" };
+  }
   _play(sessionId, turnId, itemId, text) {
     const hist = (this.histories[sessionId] = this.histories[sessionId] || []);
     hist.push({ itemId: `u-${Date.now()}`, kind: "userMessage", turnId, revision: 1, status: "completed", text });

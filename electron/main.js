@@ -1,6 +1,6 @@
 // OpenMuse desktop shell: embeds the Node bridge server, shows the web UI.
 "use strict";
-const { app, BrowserWindow, shell } = require("electron");
+const { app, BrowserWindow, shell, ipcMain, webContents } = require("electron");
 const http = require("node:http");
 const path = require("node:path");
 
@@ -55,6 +55,7 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
+      webviewTag: true,
     },
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -68,12 +69,37 @@ function createWindow() {
   return win;
 }
 
+// Screenshot + inspect for the in-app browser pane: the renderer passes the
+// guest webview's webContents id; capture gives back a PNG data URL.
+function registerBrowserIpc() {
+  ipcMain.handle("openmuse:browser-capture", async (_e, guestId) => {
+    const guest = webContents.fromId(Number(guestId));
+    if (!guest || guest.isDestroyed()) throw new Error("browser view is not ready");
+    const img = await guest.capturePage();
+    return { dataUrl: img.toDataURL() };
+  });
+  ipcMain.handle("openmuse:browser-devtools", async (_e, guestId) => {
+    const guest = webContents.fromId(Number(guestId));
+    if (!guest || guest.isDestroyed()) throw new Error("browser view is not ready");
+    if (guest.isDevToolsOpened()) guest.closeDevTools();
+    else guest.openDevTools({ mode: "detach" });
+    return { ok: true };
+  });
+  ipcMain.handle("openmuse:open-external", async (_e, url) => {
+    if (typeof url === "string" && (url.startsWith("http://") || url.startsWith("https://"))) {
+      await shell.openExternal(url);
+    }
+    return { ok: true };
+  });
+}
+
 async function main() {
   if (!app.requestSingleInstanceLock()) {
     app.quit();
     return;
   }
   await app.whenReady();
+  registerBrowserIpc();
   await ensureServer();
   if (SMOKE) {
     console.log("SMOKE:", JSON.stringify(await health()));

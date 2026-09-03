@@ -47,6 +47,19 @@ npm run dev:web
 
 Then open http://localhost:5174 in a browser.
 
+The composer accepts pasted (`Cmd+V`), dropped, or picked images (sent as
+model image parts, up to 8 per turn) and text files (inlined into the
+prompt); the footer collapses folder, model, effort, and approval into one
+settings popover.
+
+The **Browser** button (top right) docks a live browser pane on the right
+side: enter any URL (`localhost:3000`, a dev server, or a live site),
+navigate with back/forward/reload, zoom, and inspect. **Screenshot** captures
+the page — attach it straight into the chat as an image, or download the PNG.
+Full navigation/screenshots work in the desktop app; in a plain browser tab
+pages render in an iframe (some sites block framing) and screenshots are
+disabled.
+
 ## Desktop app (Electron)
 
 The same UI + server wrapped as a real Mac app. It boots its own
