@@ -602,28 +602,37 @@ select.pill option {
   overflow: auto;
 }
 
-/* ---------- thinking block: one in-place container per run of ---------- */
-/* intermediate activity (reasoning parts, tool calls, other non-message */
-/* items). Only user/agent messages render as bubbles; everything else  */
-/* appends as rows here instead of posting separate messages.           */
+/* ---------- thinking block: one calm container per run of ---------- */
+/* intermediate activity. The header holds a single live line (latest step, */
+/* swapped in place); the full history expands smoothly on click.          */
 .think {
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--card);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 40%), var(--card);
   overflow: hidden;
+  transition:
+    border-color 0.3s ease,
+    box-shadow 0.3s ease,
+    background 0.3s ease;
+}
+
+.think.live {
+  border-color: rgba(74, 168, 255, 0.38);
+  box-shadow: 0 0 0 1px rgba(74, 168, 255, 0.12), 0 8px 28px rgba(0, 60, 140, 0.25);
+  animation: think-glow 2.6s ease-in-out infinite;
 }
 
 .thinkhead {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 11px;
   background: transparent;
   border: 0;
   color: var(--muted);
   font-family: var(--sans);
   font-size: 13px;
-  padding: 9px 13px;
+  padding: 10px 13px;
   cursor: pointer;
   text-align: left;
 }
@@ -633,72 +642,159 @@ select.pill option {
 }
 
 .thinkspin {
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
   border-radius: 50%;
-  border: 1.5px solid var(--faint);
+  border: 2px solid rgba(74, 168, 255, 0.25);
+  border-top-color: var(--accent);
   flex-shrink: 0;
-}
-
-.thinkspin.on {
-  border-color: var(--accent);
-  border-top-color: transparent;
   animation: spin 0.9s linear infinite;
 }
 
-.think:not(.live) .thinkspin {
-  border-color: var(--good);
+.thinkdone {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
   background: var(--good-soft);
+  color: var(--good);
+  font-size: 10px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.thinkstack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.thinktopline {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
 }
 
 .thinktitle {
-  font-weight: 600;
+  font-weight: 650;
+  font-size: 13px;
+  letter-spacing: 0.01em;
   color: var(--ink);
 }
 
-.thinkcount {
-  font-size: 12px;
+/* Shimmer only where background-clip:text exists; elsewhere the solid
+   --ink above stands (never transparent text on a light box). */
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .think.live .thinktitle {
+    background: linear-gradient(90deg, var(--ink) 20%, var(--accent-ink) 50%, var(--ink) 80%);
+    background-size: 220% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: think-shimmer 2.4s linear infinite;
+  }
+}
+
+.thinkelapsed {
+  font-family: var(--mono);
+  font-size: 11px;
   color: var(--faint);
   font-variant-numeric: tabular-nums;
+}
+
+.thinkcount {
+  font-size: 11.5px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.thinkpreview {
+  display: block;
+  font-size: 12.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  mask-image: linear-gradient(90deg, #000 82%, transparent);
+  animation: think-swap 0.38s cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+.thinkpreview.settled {
+  color: var(--faint);
 }
 
 .thinkchev {
   margin-left: auto;
   color: var(--faint);
-  font-size: 12px;
+  font-size: 13px;
+  flex-shrink: 0;
+  transition: transform 0.3s cubic-bezier(0.33, 1, 0.68, 1);
+}
+
+.think.open .thinkchev {
+  transform: rotate(90deg);
+}
+
+/* Smooth expand/collapse without mounting churn. */
+.thinkwrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 0.38s cubic-bezier(0.33, 1, 0.68, 1),
+    opacity 0.3s ease;
+}
+
+.thinkwrap.open {
+  grid-template-rows: 1fr;
+  opacity: 1;
 }
 
 .thinkbody {
-  border-top: 1px solid var(--line);
-  padding: 4px 0;
+  overflow: hidden auto;
+  min-height: 0;
   max-height: 320px;
-  overflow-y: auto;
+  border-top: 1px solid transparent;
+  padding: 0;
+}
+
+.thinkwrap.open .thinkbody {
+  border-top-color: var(--line);
+  padding: 5px 0;
 }
 
 .thinkrow {
   display: flex;
-  gap: 10px;
+  gap: 11px;
   align-items: flex-start;
-  padding: 7px 13px 7px 18px;
+  padding: 8px 14px 8px 16px;
   font-size: 13px;
+  animation: think-row-in 0.35s cubic-bezier(0.33, 1, 0.68, 1) both;
 }
 
 .thinkrow + .thinkrow {
-  border-top: 1px dashed var(--line);
+  border-top: 1px dashed rgba(35, 45, 61, 0.7);
 }
 
-.thinkdot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--faint);
+.thinkstep {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
   flex-shrink: 0;
-  margin-top: 6px;
+  margin-top: 3px;
+  width: 20px;
 }
 
-.thinkrow.active .thinkdot {
-  background: var(--accent);
-  animation: pulse-dot 1.2s ease infinite;
+.thinkrow.active .thinkstep {
+  color: var(--accent);
 }
 
 .thinkmain {
@@ -708,8 +804,8 @@ select.pill option {
 
 .thinklabel {
   font-family: var(--mono);
-  font-size: 11.5px;
-  letter-spacing: 0.04em;
+  font-size: 11px;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--faint);
 }
@@ -718,16 +814,59 @@ select.pill option {
   color: var(--accent-ink);
 }
 
+.thinkrow.active .thinklabel::after {
+  content: " ●";
+  animation: pulse-dot 1.2s ease infinite;
+}
+
 .thinktext {
   margin: 3px 0 0;
   font-family: var(--mono);
   font-size: 12.5px;
-  line-height: 1.55;
+  line-height: 1.6;
   color: var(--muted);
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 160px;
   overflow: auto;
+}
+
+@keyframes think-swap {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes think-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes think-shimmer {
+  to {
+    background-position: -220% 0;
+  }
+}
+
+@keyframes think-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(74, 168, 255, 0.1), 0 8px 28px rgba(0, 60, 140, 0.22);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(74, 168, 255, 0.2), 0 8px 32px rgba(0, 90, 200, 0.32);
+  }
 }
 
 /* ---------- approval + questions ---------- */

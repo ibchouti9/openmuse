@@ -783,35 +783,87 @@ function thinkingDetail(entry: Item): string {
   return text || genericRowText(entry);
 }
 
-// One collapsible block per run of intermediate activity. Reasoning parts,
-// tool calls, and other non-message items append as rows of the same block
-// so thinking updates in place instead of posting one message per item.
-function ThinkingBlock({ entries, streamingId, open }: { entries: Item[]; streamingId: string | null; open: boolean }) {
-  const [expanded, setExpanded] = useState(open);
-  useEffect(() => {
-    if (open) setExpanded(true);
-  }, [open]);
+function shortPreview(s: string, n = 140): string {
+  const one = (s || "").replace(/\s+/g, " ").trim();
+  return one.length > n ? `${one.slice(0, n - 1)}…` : one;
+}
+
+// One collapsible block per run of intermediate activity. The header always
+// shows a single live line (the latest step, swapped in place with a soft
+// fade); the full step history mounts once and only opens on click, so
+// streaming deltas never remount or re-animate the container.
+export function ThinkingBlock({
+  entries,
+  streamingId,
+  defaultOpen,
+}: {
+  entries: Item[];
+  streamingId: string | null;
+  defaultOpen?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(defaultOpen ?? false);
   const live = thinkingLive(entries, streamingId);
-  const key = entries.map((e) => e.itemId).join("|");
+  const [elapsed, setElapsed] = useState(0);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const seenCount = useRef(entries.length);
+
+  useEffect(() => {
+    if (!live) return;
+    const t0 = Date.now();
+    setElapsed(0);
+    const t = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [live]);
+
+  // Follow the newest step inside the expanded list only.
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!expanded || !el || entries.length === seenCount.current) return;
+    seenCount.current = entries.length;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [entries.length, expanded]);
+
+  const latest = entries[entries.length - 1];
+  const preview = latest ? shortPreview(thinkingDetail(latest)) : "";
   return (
-    <div className={`think${live ? " live" : ""}`} key={key}>
+    <div className={`think${live ? " live" : ""}${expanded ? " open" : ""}`}>
       <button className="thinkhead" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}>
-        <span className={`thinkspin${live ? " on" : ""}`} aria-hidden />
-        <span className="thinktitle">{live ? "Thinking…" : "Thought"}</span>
-        <span className="thinkcount" aria-hidden>
-          {entries.length} step{entries.length === 1 ? "" : "s"}
+        {live ? <span className="thinkspin on" aria-hidden /> : <span className="thinkdone" aria-hidden>✓</span>}
+        <span className="thinkstack">
+          <span className="thinktopline">
+            <span className="thinktitle">{live ? "Thinking" : "Thought"}</span>
+            {live && elapsed > 0 && (
+              <span className="thinkelapsed" aria-hidden>
+                {elapsed}s
+              </span>
+            )}
+            <span className="thinkcount" aria-hidden>
+              {entries.length} step{entries.length === 1 ? "" : "s"}
+            </span>
+          </span>
+          {preview && (
+            <span
+              key={live ? latest.itemId : `done-${entries.length}`}
+              className={`thinkpreview${live ? "" : " settled"}`}
+              title={preview}
+            >
+              {preview}
+            </span>
+          )}
         </span>
         <span className="thinkchev" aria-hidden>
-          {expanded ? "▾" : "▸"}
+          ▸
         </span>
       </button>
-      {expanded && (
-        <div className="thinkbody">
-          {entries.map((entry) => {
+      <div className={`thinkwrap${expanded ? " open" : ""}`}>
+        <div ref={bodyRef} className="thinkbody">
+          {entries.map((entry, i) => {
             const active = streamingId === entry.itemId || entry.status === "inProgress";
             return (
               <div key={entry.itemId} className={`thinkrow${active ? " active" : ""}`}>
-                <span className="thinkdot" aria-hidden />
+                <span className="thinkstep" aria-hidden>
+                  {String(i + 1).padStart(2, "0")}
+                </span>
                 <div className="thinkmain">
                   <div className="thinklabel">{thinkingLabel(entry)}</div>
                   {thinkingDetail(entry) && <pre className="thinktext">{thinkingDetail(entry)}</pre>}
@@ -820,7 +872,7 @@ function ThinkingBlock({ entries, streamingId, open }: { entries: Item[]; stream
             );
           })}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -1563,13 +1615,20 @@ export default function App() {
   }
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+  // True while the reader sits at the bottom; streaming deltas must not yank
+  // them back down once they've scrolled up to read.
+  const stickRef = useRef(true);
   // Deltas that arrive before their item's open event (ephemeral opens have
   // no durable record yet). Drained into the item when the open arrives.
   const pendingDeltas = useRef<{ itemId: string; field: string; delta: string }[]>([]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [items, approvals, prompts]);
+    if (!stickRef.current) return;
+    // Instant while deltas pour in (queuing a smooth scroll per character is
+    // what made the thread stutter); smooth for settled updates.
+    bottomRef.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth", block: "end" });
+  }, [items, approvals, prompts, streaming]);
 
   const upsertItem = useCallback((wire: any) => {
     if (!wire || !wire.itemId || typeof wire.kind !== "string") return;
@@ -2002,7 +2061,6 @@ export default function App() {
   // only user/agent messages render as bubbles. Memoized so block identity
   // (and collapse state) survives unrelated re-renders.
   const blocks = useMemo(() => groupThread(items), [items]);
-  const lastThinkIdx = blocks.reduce((acc, b, i) => (b.type === "thinking" ? i : acc), -1);
 
   return (
     <div className="shell">
@@ -2261,10 +2319,18 @@ export default function App() {
                 <div className="ctxfill" style={{ width: `${ctxPct}%` }} />
               </div>
             )}
-            <div className="thread" aria-live="polite">
-              {blocks.map((b, i) =>
+            <div
+              ref={threadRef}
+              className="thread"
+              aria-live="polite"
+              onScroll={(e) => {
+                const el = e.currentTarget;
+                stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+              }}
+            >
+              {blocks.map((b) =>
                 b.type === "thinking" ? (
-                  <ThinkingBlock key={b.key} entries={b.entries} streamingId={streaming} open={i === lastThinkIdx} />
+                  <ThinkingBlock key={b.key} entries={b.entries} streamingId={streaming} />
                 ) : (
                   <div
                     key={b.item.itemId}
