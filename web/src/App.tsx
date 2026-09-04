@@ -256,11 +256,16 @@ function QuestionCard({ q, onAnswer, onCancel }: { q: InputPrompt; onAnswer: (an
   );
 }
 
+// Default model when the user hasn't picked one (no "Auto" option;
+// sessions always pin a concrete model).
+const DEFAULT_MODEL = "muse-spark-1.3";
+
+// Approval modes ranked least permissive → most permissive.
 const APPROVAL_LABELS: Record<string, string> = {
+  denyUnmatched: "Deny new",
   onRequest: "Ask",
   promptUnmatched: "Ask new",
   allowAll: "Auto-accept",
-  denyUnmatched: "Deny new",
 };
 
 function SlidersIcon() {
@@ -318,7 +323,8 @@ function Composer({
   const fileRef = useRef<HTMLInputElement>(null);
   const readyCount = attachments.filter((a) => a.ready && !a.error).length;
   const canSend = !!input.trim() || readyCount > 0;
-  const summary = `${folderName} · ${model || "Auto"} · ${effort ? `Effort: ${effort}` : "Auto"} · ${APPROVAL_LABELS[approvalMode] || approvalMode}`;
+  const modelOptions = models.includes(DEFAULT_MODEL) ? models : [DEFAULT_MODEL, ...models];
+  const summary = `${folderName} · ${model} · ${effort ? `Effort: ${effort}` : "Auto"} · ${APPROVAL_LABELS[approvalMode] || approvalMode}`;
 
   return (
     <div
@@ -442,8 +448,7 @@ function Composer({
             <div className="sprow">
               <span>Model</span>
               <select className="pill select" value={model} onChange={(e) => onModel(e.target.value)} title="Model">
-                <option value="">Auto</option>
-                {models.map((m) => (
+                {modelOptions.map((m) => (
                   <option key={m} value={m}>
                     {m}
                   </option>
@@ -471,10 +476,10 @@ function Composer({
                 onChange={(e) => onApproval(e.target.value)}
                 title="Approval enforcement"
               >
+                <option value="denyUnmatched">Deny new</option>
                 <option value="onRequest">Ask</option>
                 <option value="promptUnmatched">Ask new</option>
                 <option value="allowAll">Auto-accept</option>
-                <option value="denyUnmatched">Deny new</option>
               </select>
             </div>
           </div>
@@ -1029,7 +1034,7 @@ function AccountPanel({ model, effort, approvalMode, workspace }: { model: strin
       <div className="msg agent">
         <div className="who">Account profile</div>
         <p className="hint">Who is OpenMuse acting as, and with what defaults. Keys stay on this machine; login itself happens in your terminal via `muse login`.</p>
-        <pre className="tbody out">{`provider: ${provider}\nmodel: ${model || "auto"}\neffort: ${effort || "auto"}\napproval: ${approvalMode}\nworkspace: ${workspace || "server default"}`}</pre>
+        <pre className="tbody out">{`provider: ${provider}\nmodel: ${model}\neffort: ${effort || "auto"}\napproval: ${approvalMode}\nworkspace: ${workspace || "server default"}`}</pre>
         <JsonOut value={cfgOut} />
         {cfgErr && <p className="err">{cfgErr}</p>}
       </div>
@@ -1093,8 +1098,8 @@ export default function App() {
   const [ctx, setCtx] = useState<{ used: number; window: number } | null>(null);
   const [streaming, setStreaming] = useState<string | null>(null);
   const [models, setModels] = useState<string[]>([]);
-  const [model, setModel] = useState("");
-  const [approvalMode, setApprovalMode] = useState("onRequest");
+  const [model, setModel] = useState(DEFAULT_MODEL);
+  const [approvalMode, setApprovalMode] = useState("allowAll");
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [workspace, setWorkspace] = useState(() => localStorage.getItem("openmuse.workspace") || "");
   const [picking, setPicking] = useState(false);
@@ -1567,8 +1572,7 @@ export default function App() {
   async function newSession(): Promise<string | null> {
     setError(null);
     try {
-      const body: any = { approvalMode };
-      if (model) body.modelId = model;
+      const body: any = { approvalMode, modelId: model || DEFAULT_MODEL };
       if (workspace) body.workspaceRoot = workspace;
       const providerId = localStorage.getItem("openmuse.provider") || "";
       const fixedSid = localStorage.getItem("openmuse.sessionId") || "";
@@ -1801,7 +1805,7 @@ export default function App() {
             </span>
             <span className="pmeta">
               <span className="pname">Local</span>
-              <span className="pplan">{model || "auto"}</span>
+              <span className="pplan">{model}</span>
             </span>
           </button>
           {menuOpen && (
