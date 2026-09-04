@@ -164,30 +164,96 @@ function Markdown({ text }: { text: string }) {
   return <div className="md" onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-function ApprovalCard({ a, onDecide }: { a: Approval; onDecide: (a: Approval, choiceId: string, feedback?: string) => void }) {
+function choiceText(c: Choice): string {
+  return `${c.decision || ""} ${c.choiceId || ""} ${c.label || ""}`.toLowerCase();
+}
+
+function isDestructiveChoice(c: Choice): boolean {
+  return /abort|deny|denied|reject|revoke|never|stop|cancel/.test(choiceText(c));
+}
+
+function isAllowChoice(c: Choice): boolean {
+  return /approv|allow|accept|always|once|confirm|proceed|continue/.test(choiceText(c));
+}
+
+function ApprovalCard({ a, onDecide }: { a: Approval; onDecide: (a: Approval, choiceId: string, feedback?: string) => void | Promise<void> }) {
   const [feedback, setFeedback] = useState("");
-  const canFeedback = a.availableChoices.some((c) => c.acceptsFeedback);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const choices = a.availableChoices;
+  const canFeedback = choices.some((c) => c.acceptsFeedback);
+  const feedbackChoice = choices.find((c) => c.acceptsFeedback);
+  const feedbackLabel = feedbackChoice ? feedbackChoice.label || feedbackChoice.choiceId : "Reject";
+  const destructiveIndex = choices.findIndex(isDestructiveChoice);
+  const safestIndex = destructiveIndex >= 0 ? destructiveIndex : 0;
+  const busy = pendingId !== null;
+
+  function pick(index: number) {
+    const c = choices[index];
+    if (!c || pendingId !== null) return;
+    setPendingId(c.choiceId);
+    Promise.resolve(onDecide(a, c.choiceId, c.acceptsFeedback ? feedback || undefined : undefined)).catch(() =>
+      setPendingId(null),
+    );
+  }
+
+  function onKeyDown(e: React.KeyboardEvent) {
+    const t = e.target as HTMLElement | null;
+    const inField = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA");
+    if (e.key === "Enter" && inField) {
+      e.preventDefault();
+      const fb = choices.findIndex((c) => c.acceptsFeedback);
+      pick(fb >= 0 ? fb : safestIndex);
+      return;
+    }
+    if (inField || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key.length === 1) {
+      const n = Number(e.key);
+      if (Number.isInteger(n) && n >= 1 && n <= Math.min(choices.length, 9)) {
+        e.preventDefault();
+        pick(n - 1);
+      }
+    }
+  }
+
   return (
-    <div className="approval">
+    <div className="approval" role="group" aria-label={`Approval request for ${a.toolName}`} aria-busy={busy} onKeyDown={onKeyDown}>
       <div className="who">Needs approval · {a.toolName}</div>
       <pre className="body">{renderSubject(a.subject)}</pre>
-      {a.availableChoices.map((c) => c.rulePreview).filter(Boolean)[0] && (
-        <p className="rule">{a.availableChoices.map((c) => c.rulePreview).filter(Boolean)[0]}</p>
+      {choices.map((c) => c.rulePreview).filter(Boolean)[0] && (
+        <p className="rule">{choices.map((c) => c.rulePreview).filter(Boolean)[0]}</p>
       )}
       <div className="row">
-        {a.availableChoices.map((c) => (
-          <button key={c.choiceId} className="choice" onClick={() => onDecide(a, c.choiceId, c.acceptsFeedback ? feedback || undefined : undefined)}>
-            {c.label || c.choiceId}
-          </button>
-        ))}
-        {a.availableChoices.length === 0 && <span className="hint">waiting on host…</span>}
+        {choices.map((c, i) => {
+          const kind = isDestructiveChoice(c) ? "destructive" : isAllowChoice(c) ? "allow" : "";
+          return (
+            <button
+              key={c.choiceId}
+              className={kind ? `choice ${kind}` : "choice"}
+              autoFocus={i === safestIndex}
+              disabled={busy}
+              aria-label={`${c.label || c.choiceId} (press ${i + 1} of ${choices.length})`}
+              title={i < 9 ? `Press ${i + 1}` : undefined}
+              onClick={() => pick(i)}
+            >
+              {i < 9 && (
+                <kbd className="key" aria-hidden>
+                  {i + 1}
+                </kbd>
+              )}
+              {c.label || c.choiceId}
+            </button>
+          );
+        })}
+        {choices.length === 0 && <span className="hint">waiting on host…</span>}
       </div>
       {canFeedback && (
         <input
           className="feedback"
           value={feedback}
           onChange={(e) => setFeedback(e.target.value)}
-          placeholder="Feedback to the model (sent with Reject)"
+          placeholder={`Feedback to the model (sent with ${feedbackLabel})`}
+          aria-label="Feedback to the model"
+          disabled={busy}
         />
       )}
     </div>
@@ -1675,7 +1741,10 @@ export default function App() {
     }
   }
 
+  const decideFlight = useRef(new Set<string>());
   async function decide(a: Approval, choiceId: string, feedback?: string) {
+    if (decideFlight.current.has(a.approvalId)) return;
+    decideFlight.current.add(a.approvalId);
     setError(null);
     try {
       await api("/api/approval/decide", {
@@ -1691,6 +1760,9 @@ export default function App() {
       setApprovals((xs) => xs.map((x) => (x.approvalId === a.approvalId ? { ...x, settled: true } : x)));
     } catch (e: any) {
       setError(e.message);
+      throw e;
+    } finally {
+      decideFlight.current.delete(a.approvalId);
     }
   }
 

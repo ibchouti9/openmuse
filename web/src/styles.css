@@ -922,6 +922,49 @@ button.choice.on {
   color: var(--accent-ink);
 }
 
+button.choice:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+button.choice.allow {
+  background: var(--accent-grad);
+  color: #fff;
+  border: 0;
+}
+
+button.choice.allow:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+button.choice.destructive {
+  background: transparent;
+  color: var(--bad);
+  border: 1.5px solid var(--bad);
+}
+
+button.choice.destructive:hover:not(:disabled) {
+  border-color: var(--bad);
+  background: var(--bad-soft);
+}
+
+button.choice .key {
+  display: inline-block;
+  min-width: 18px;
+  margin-right: 7px;
+  padding: 0 5px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: inherit;
+  opacity: 0.75;
+  background: rgba(0, 0, 0, 0.25);
+  text-align: center;
+}
+
 .qblock {
   margin-bottom: 12px;
 }
