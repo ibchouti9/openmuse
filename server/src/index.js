@@ -66,14 +66,16 @@ app.get("/api/health", (req, res) => {
   res.json({ ok: true, mock: MOCK, host: host.status() });
 });
 
+function clampInt(v, def, min, max) {
+  const n = Number.parseInt(v, 10);
+  if (!Number.isFinite(n)) return def;
+  return Math.min(max, Math.max(min, n));
+}
+
 app.get("/api/sessions", async (req, res) => {
   try {
     // Cursor is opaque: pass through verbatim, never parse as a number.
-    let limit = 50;
-    if (req.query.limit !== undefined) {
-      const n = Number(req.query.limit);
-      if (Number.isInteger(n) && n > 0 && n <= 200) limit = n;
-    }
+    const limit = clampInt(req.query.limit, 50, 1, 100);
     let cursor = req.query.cursor ?? null;
     if (cursor === "") cursor = null;
     res.json(await host.sessionList({ limit, cursor }));
@@ -203,7 +205,8 @@ app.get("/api/view", async (req, res) => {
   try {
     const { sessionId, cursor } = req.query;
     if (!sessionId) return res.status(400).json({ error: "sessionId required" });
-    res.json(await host.viewPage({ sessionId, cursor: cursor || null }));
+    const limit = clampInt(req.query.limit, 200, 1, 500);
+    res.json(await host.viewPage({ sessionId, cursor: cursor || null, limit }));
   } catch (e) {
     sendError(res, e);
   }
@@ -219,11 +222,17 @@ app.get("/api/transcript", async (req, res) => {
   }
 });
 
+// Bounded walk: small pages keep stdio frames small and each page fails
+// fast (30s) instead of hanging export/transcript behind a 120s default.
+const TRANSCRIPT_PAGE_LIMIT = 200;
+const TRANSCRIPT_MAX_PAGES = 10;
+const TRANSCRIPT_PAGE_TIMEOUT_MS = 30000;
+
 async function collectTranscript(sessionId) {
   const items = [];
   let cursor = null;
-  for (let page = 0; page < 10; page++) {
-    const r = await host.viewPage({ sessionId, cursor, limit: 500 });
+  for (let page = 0; page < TRANSCRIPT_MAX_PAGES; page++) {
+    const r = await host.viewPage({ sessionId, cursor, limit: TRANSCRIPT_PAGE_LIMIT, timeoutMs: TRANSCRIPT_PAGE_TIMEOUT_MS });
     for (const e of r.events || []) {
       if (e.params && e.params.item && e.params.item.itemId) items.push(e.params.item);
     }
