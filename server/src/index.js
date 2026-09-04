@@ -68,7 +68,15 @@ app.get("/api/health", (req, res) => {
 
 app.get("/api/sessions", async (req, res) => {
   try {
-    res.json(await host.sessionList({ limit: 50 }));
+    // Cursor is opaque: pass through verbatim, never parse as a number.
+    let limit = 50;
+    if (req.query.limit !== undefined) {
+      const n = Number(req.query.limit);
+      if (Number.isInteger(n) && n > 0 && n <= 200) limit = n;
+    }
+    let cursor = req.query.cursor ?? null;
+    if (cursor === "") cursor = null;
+    res.json(await host.sessionList({ limit, cursor }));
   } catch (e) {
     sendError(res, e);
   }

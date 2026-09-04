@@ -1417,6 +1417,30 @@ export default function App() {
     return [turns, fmtDate(s.updatedAt)].filter(Boolean).join(" · ");
   }
 
+  // Chat reliability: session list is newest-first by updatedAt (fallback:
+  // keep existing order) and de-duplicated by sessionId. The server emits
+  // session/started twice for mocks (explicit broadcast + host
+  // notification), so every insert path must upsert, never append blindly.
+  function sortSessions(xs: Session[]): Session[] {
+    return xs.slice().sort((a, b) => {
+      const ta = a.updatedAt ? Date.parse(a.updatedAt) : NaN;
+      const tb = b.updatedAt ? Date.parse(b.updatedAt) : NaN;
+      if (!Number.isNaN(ta) && !Number.isNaN(tb) && ta !== tb) return tb - ta;
+      return 0;
+    });
+  }
+
+  function upsertSessionList(xs: Session[], s: Session): Session[] {
+    if (!s || !s.sessionId) return xs;
+    const i = xs.findIndex((x) => x.sessionId === s.sessionId);
+    if (i >= 0) {
+      const next = xs.slice();
+      next[i] = { ...xs[i], ...s };
+      return sortSessions(next);
+    }
+    return sortSessions([{ sessionId: s.sessionId, title: s.title, updatedAt: s.updatedAt }, ...xs]);
+  }
+
   function titleFromItems(arr: Item[], sid: string) {
     const first = arr.find((w) => w.kind === "userMessage" && w.text.trim());
     if (first) {
@@ -1458,15 +1482,30 @@ export default function App() {
         // clobber the final state with a stale revision.
         if (it.revision != null && prev.revision != null && it.revision < prev.revision) return xs;
         const next = xs.slice();
-        next[i] = { ...it, text: it.text || prev.text, visibleOutput: it.visibleOutput || prev.visibleOutput };
+        next[i] = {
+          ...it,
+          text: it.text || prev.text,
+          visibleOutput: it.visibleOutput || prev.visibleOutput,
+          summary: it.summary && it.summary.length ? it.summary : prev.summary,
+          fallbackText: it.fallbackText || prev.fallbackText,
+        };
         return next;
       }
       // Host echo of our optimistic message: adopt it instead of doubling.
+      // Exact-text match covers the common case; the fallback adopts the
+      // oldest pending local echo because the host record can differ
+      // (attachment blocks appended, trimming, image-only placeholder).
       if (it.kind === "userMessage") {
         const j = xs.findIndex((x) => x.itemId.startsWith("local-") && x.text === it.text);
         if (j >= 0) {
           const next = xs.slice();
           next[j] = it;
+          return next;
+        }
+        const k = xs.findIndex((x) => x.itemId.startsWith("local-"));
+        if (k >= 0) {
+          const next = xs.slice();
+          next[k] = it;
           return next;
         }
       }
@@ -1476,6 +1515,11 @@ export default function App() {
 
   const onEvent = useCallback(
     (method: string, p: any) => {
+      if (method === "session/started" && p && p.session) {
+        const s = p.session;
+        setSessions((xs) => upsertSessionList(xs, s));
+        return;
+      }
       if (p.sessionId && sessionId && p.sessionId !== sessionId) return;
       switch (method) {
         case "turn/started":
@@ -1642,7 +1686,14 @@ export default function App() {
       .then((h) => setStatus(h.host))
       .catch((e) => setError(e.message));
     api("/api/sessions")
-      .then((r) => setSessions(r.sessions || r || []))
+      .then((r) => {
+        const arr = r.sessions || r || [];
+        const seen = new Set<string>();
+        const deduped = (Array.isArray(arr) ? arr : []).filter((s: Session) =>
+          s && s.sessionId ? (seen.has(s.sessionId) ? false : (seen.add(s.sessionId), true)) : false,
+        );
+        setSessions(sortSessions(deduped));
+      })
       .catch(() => {});
     api("/api/models")
       .then((r) => {
@@ -1663,6 +1714,9 @@ export default function App() {
     setCtx(null);
     setBusy(false);
     setStreaming(null);
+    // Resume reliability: deltas buffered for the previous session must not
+    // leak into the next one when the open event arrives late.
+    pendingDeltas.current = [];
   }
 
   function keepWire(w: any) {
@@ -1706,7 +1760,7 @@ export default function App() {
       if (fixedSid) body.sessionId = fixedSid;
       const r = await api("/api/session/start", { method: "POST", body: JSON.stringify(body) });
       const s = r.session;
-      setSessions((xs) => [{ sessionId: s.sessionId, title: s.title, updatedAt: s.updatedAt }, ...xs]);
+      setSessions((xs) => upsertSessionList(xs, s));
       setSessionId(s.sessionId);
       resetView();
       return s.sessionId;
@@ -1722,6 +1776,8 @@ export default function App() {
       const r = await api("/api/session/resume", { method: "POST", body: JSON.stringify({ sessionId: s.sessionId }) });
       setSessionId(s.sessionId);
       resetView();
+      // Resume bumps the session to the top so the list tracks recency.
+      setSessions((xs) => upsertSessionList(xs, s));
       applyHistory(r, s.sessionId);
       await loadTranscript(s.sessionId);
     } catch (e: any) {
@@ -1899,7 +1955,7 @@ export default function App() {
             onChange={(e) => setChatFilter(e.target.value)}
             placeholder="Search chats…"
           />
-          {sessions
+          {sortSessions(sessions)
             .filter((s) => titleFor(s).toLowerCase().includes(chatFilter.toLowerCase()))
             .map((s) => (
               <button
@@ -2079,7 +2135,7 @@ export default function App() {
                   try {
                     const r = await ops.fork(sessionId);
                     const f = r.session;
-                    if (f) setSessions((xs) => [{ sessionId: f.sessionId, title: f.title, updatedAt: f.updatedAt }, ...xs]);
+                    if (f) setSessions((xs) => upsertSessionList(xs, f));
                   } catch (e: any) {
                     setError(e.message);
                   }
