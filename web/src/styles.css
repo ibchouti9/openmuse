@@ -1445,36 +1445,6 @@ button.newbtn span[aria-hidden] {
   line-height: 1;
 }
 
-.navlist {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.navlist button {
-  text-align: left;
-  background: transparent;
-  color: var(--muted);
-  border: 0;
-  border-radius: 9px;
-  padding: 7px 10px;
-  font-size: 13.5px;
-  font-weight: 500;
-  cursor: pointer;
-  font-family: var(--sans);
-  line-height: 1.4;
-}
-
-.navlist button:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--ink);
-}
-
-.navlist button.active {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--ink);
-}
-
 .sess button.active {
   box-shadow: none;
 }
@@ -1717,53 +1687,6 @@ button.mini:hover {
   font-family: var(--serif);
   font-weight: 400;
   letter-spacing: 0;
-}
-
-/* Parity pages render as cards, not chat bubbles */
-main:not(.tab-chat) .thread {
-  max-width: 760px;
-}
-
-main:not(.tab-chat) .msg.agent {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 16px 18px;
-}
-
-main:not(.tab-chat) .msg.agent .who {
-  display: block;
-  font-size: 14px;
-  font-weight: 700;
-  margin-bottom: 6px;
-}
-
-main:not(.tab-chat) .msg.agent .hint {
-  padding: 0;
-  margin: 0 0 12px;
-}
-
-main:not(.tab-chat) .msg.agent .row {
-  margin-bottom: 10px;
-}
-
-main:not(.tab-chat) .msg.agent input.feedback,
-main:not(.tab-chat) .msg.agent textarea.feedback {
-  margin-top: 0;
-}
-
-main:not(.tab-chat) pre.tbody.out {
-  background: #080c13;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-family: var(--mono);
-  font-size: 12px;
-  color: #dbe4f0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 320px;
-  overflow: auto;
 }
 
 /* ---------- composer: single-row controls + attachments ---------- */

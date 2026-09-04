@@ -877,292 +877,6 @@ export function ThinkingBlock({
   );
 }
 
-function usePanel<T>(fn: () => Promise<T>) {
-  const [out, setOut] = useState<T | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  async function run() {
-    setLoading(true);
-    setErr(null);
-    try {
-      setOut(await fn());
-    } catch (e: any) {
-      setErr(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-  return { out, err, loading, run, setOut };
-}
-
-function SessionsPanel({ sessionId }: { sessionId: string | null }) {
-  const [sid, setSid] = useState(sessionId || "");
-  const [cmd, setCmd] = useState("");
-  const [subId, setSubId] = useState("");
-  const [subBody, setSubBody] = useState("");
-  const [turnId, setTurnId] = useState("");
-  const [clarify, setClarify] = useState("");
-  const p = usePanel(() => Promise.resolve(null as unknown));
-  useEffect(() => {
-    setSid(sessionId || "");
-  }, [sessionId]);
-  async function call(fn: () => Promise<unknown>) {
-    try {
-      p.setOut("running…" as unknown);
-      p.setOut((await fn()) as never);
-    } catch (e: any) {
-      p.setOut({ error: e.message } as never);
-    }
-  }
-  return (
-    <div className="thread">
-      <div className="msg agent">
-        <div className="who">Sessions</div>
-        <p className="hint">Full session controls: read, fork, compact, shell (!), pending approvals, steer, unqueue, clarify, unsubscribe, subagents.</p>
-        <input className="feedback" value={sid} onChange={(e) => setSid(e.target.value)} placeholder="sessionId" />
-        <div className="row">
-          <button className="choice" onClick={() => call(() => ops.read(sid))}>Read</button>
-          <button className="choice" onClick={() => call(() => ops.fork(sid))}>Fork</button>
-          <button className="choice" onClick={() => call(() => ops.compact(sid))}>Compact</button>
-          <button className="choice" onClick={() => call(() => ops.pending(sid))}>Pending</button>
-          <button className="choice" onClick={() => call(() => ops.unsubscribe(sid))}>Unsubscribe</button>
-        </div>
-        <div className="row">
-          <input className="feedback" value={cmd} onChange={(e) => setCmd(e.target.value)} placeholder="! shell command (session/userShell)" />
-          <button className="choice" onClick={() => call(() => ops.shell(sid, cmd))}>Run</button>
-        </div>
-        <div className="row">
-          <input className="feedback" value={turnId} onChange={(e) => setTurnId(e.target.value)} placeholder="turnId (steer target / unqueue)" />
-          <button className="choice" onClick={() => call(() => ops.unqueue(sid, turnId))}>Unqueue</button>
-        </div>
-        <div className="row">
-          <input className="feedback" value={turnId} onChange={(e) => setTurnId(e.target.value)} placeholder="expectedTurnId" />
-          <input className="feedback" value={clarify} onChange={(e) => setClarify(e.target.value)} placeholder="steer text / clarify text" />
-          <button className="choice" onClick={() => call(() => ops.steer(sid, turnId, clarify))}>Steer</button>
-        </div>
-        <div className="row">
-          <input className="feedback" value={subId} onChange={(e) => setSubId(e.target.value)} placeholder="subagentId" />
-          <input className="feedback" value={subBody} onChange={(e) => setSubBody(e.target.value)} placeholder="message / followup body" />
-        </div>
-        <div className="row">
-          <button className="choice" onClick={() => call(() => ops.subagent("message", sid, subId, { body: subBody }))}>Msg</button>
-          <button className="choice" onClick={() => call(() => ops.subagent("followup", sid, subId, { body: subBody }))}>Followup</button>
-          <button className="choice" onClick={() => call(() => ops.subagent("read", sid, subId))}>Read</button>
-          <button className="choice" onClick={() => call(() => ops.subagent("stop", sid, subId))}>Stop</button>
-          <button className="choice" onClick={() => call(() => ops.subagent("close", sid, subId))}>Close</button>
-          <button className="choice" onClick={() => call(() => ops.subagent("interrupt", sid, subId))}>Interrupt</button>
-          <button className="choice" onClick={() => call(() => ops.subagent("reopen", sid, subId))}>Reopen</button>
-          <button className="choice" onClick={() => call(() => ops.subagent("resume", sid, subId))}>Resume</button>
-        </div>
-        <JsonOut value={p.out} />
-      </div>
-    </div>
-  );
-}
-
-function ExecPanel({ workspace, model, effort }: { workspace: string; model: string; effort: string }) {
-  const [prompt, setPrompt] = useState("");
-  const [approvalMode, setApprovalMode] = useState("on-request");
-  const p = usePanel(() => Promise.resolve(null as unknown));
-  return (
-    <div className="thread">
-      <div className="msg agent">
-        <div className="who">Exec (headless `muse exec`)</div>
-        <p className="hint">One-shot non-interactive run with JSONL events. Same args as the CLI: model, reasoning effort, workspace, approval mode.</p>
-        <textarea className="feedback" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="prompt" rows={3} />
-        <div className="row">
-          <input className="feedback" value={model} readOnly title="model (from chat composer)" placeholder="model" />
-          <input className="feedback" value={effort} readOnly title="reasoning effort (from chat composer)" placeholder="effort" />
-          <select className="pill select" value={approvalMode} onChange={(e) => setApprovalMode(e.target.value)}>
-            <option value="on-request">on-request</option>
-            <option value="untrusted">untrusted</option>
-            <option value="never">never</option>
-          </select>
-          <button className="primary" onClick={() => p.run().then(() => ops.exec({
-            prompt, model, reasoningEffort: effort, workspace, approvalMode,
-            provider: localStorage.getItem("openmuse.provider") || "",
-            preset: localStorage.getItem("openmuse.preset") || "",
-            permissionProfile: localStorage.getItem("openmuse.permissionProfile") || "",
-            baseUrl: localStorage.getItem("openmuse.baseUrl") || "",
-            image: localStorage.getItem("openmuse.image") || "",
-            worktree: localStorage.getItem("openmuse.worktree") || "",
-            worktreeBase: localStorage.getItem("openmuse.worktreeBase") || "",
-            worktreeExisting: localStorage.getItem("openmuse.worktreeExisting") || "",
-            parallelCalls: localStorage.getItem("openmuse.parallelCalls") || "",
-            compaction: localStorage.getItem("openmuse.compaction") || "",
-            compactionSoft: localStorage.getItem("openmuse.compactionSoft") || "",
-            compactionHard: localStorage.getItem("openmuse.compactionHard") || "",
-            maxSteps: localStorage.getItem("openmuse.maxSteps") || "",
-            maxToolBytes: localStorage.getItem("openmuse.maxToolBytes") || "",
-            sessionId: localStorage.getItem("openmuse.sessionId") || "",
-            approvalJudge: localStorage.getItem("openmuse.approvalJudge") || "",
-            agents: localStorage.getItem("openmuse.agents") || "",
-            sandboxNetwork: localStorage.getItem("openmuse.sandboxNetwork") || "",
-            yolo: localStorage.getItem("openmuse.safety")?.includes("yolo") ? "1" : "",
-            trustWorkspace: localStorage.getItem("openmuse.safety")?.includes("trust-workspace") ? "1" : "",
-            disableApproval: localStorage.getItem("openmuse.safety")?.includes("disable-approval") ? "1" : "",
-            disableSandbox: localStorage.getItem("openmuse.safety")?.includes("disable-sandbox") ? "1" : "",
-            disableWrite: localStorage.getItem("openmuse.safety")?.includes("disable-write") ? "1" : "",
-            disableShell: localStorage.getItem("openmuse.safety")?.includes("disable-shell") ? "1" : "",
-            noSessionLog: localStorage.getItem("openmuse.noSessionLog") || "",
-            subagentIsolation: localStorage.getItem("openmuse.subagentIsolation") || "",
-            disableWeb: localStorage.getItem("openmuse.disableWeb") || "",
-            noForeignCtx: localStorage.getItem("openmuse.noForeignCtx") || "",
-          }).then(p.setOut as (v: any) => void).catch((e: Error) => p.setOut({ error: e.message } as never)))}>
-            Run exec
-          </button>
-        </div>
-        {p.loading && <p className="hint">running…</p>}
-        {p.err && <p className="err">{p.err}</p>}
-        <JsonOut value={p.out} />
-      </div>
-    </div>
-  );
-}
-
-function SkillsPanel() {
-  const list = usePanel(() => ops.skills());
-  const [skill, setSkill] = useState("");
-  const [scope, setScope] = useState("user");
-  const act = usePanel(() => Promise.resolve(null as unknown));
-  useEffect(() => {
-    list.run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  return (
-    <div className="thread">
-      <div className="msg agent">
-        <div className="who">Skills (`muse skills`)</div>
-        <div className="row">
-          <button className="choice" onClick={list.run}>List</button>
-          <input className="feedback" value={skill} onChange={(e) => setSkill(e.target.value)} placeholder="skill id or path" />
-          <select className="pill select" value={scope} onChange={(e) => setScope(e.target.value)}>
-            <option value="user">user</option>
-            <option value="project">project</option>
-            <option value="built-in">built-in</option>
-            <option value="plugin">plugin</option>
-          </select>
-        </div>
-        <div className="row">
-          {(["inspect", "enable", "disable", "update", "uninstall", "install", "import", "user-only"] as const).map((a) => (
-            <button key={a} className="choice" onClick={() => act.run().then(() => ops.skillsAction(a, skill, scope).then(act.setOut as (v: any) => void).catch((e: Error) => act.setOut({ error: e.message } as never)))}>
-              {a}
-            </button>
-          ))}
-        </div>
-        {list.err && <p className="err">{list.err}</p>}
-        <JsonOut value={list.out} />
-        <JsonOut value={act.out} />
-      </div>
-    </div>
-  );
-}
-
-function PluginsPanel() {
-  const list = usePanel(() => ops.plugins());
-  const [id, setId] = useState("");
-  const act = usePanel(() => Promise.resolve(null as unknown));
-  useEffect(() => {
-    list.run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  return (
-    <div className="thread">
-      <div className="msg agent">
-        <div className="who">Plugins (`muse plugins`)</div>
-        <div className="row">
-          <button className="choice" onClick={list.run}>List</button>
-          <input className="feedback" value={id} onChange={(e) => setId(e.target.value)} placeholder="plugin id" />
-        </div>
-        <div className="row">
-          {(["inspect", "enable", "disable", "update", "remove", "approve", "reject", "install"] as const).map((a) => (
-            <button key={a} className="choice" onClick={() => act.run().then(() => ops.pluginsAction(a, id).then(act.setOut as (v: any) => void).catch((e: Error) => act.setOut({ error: e.message } as never)))}>
-              {a}
-            </button>
-          ))}
-        </div>
-        <div className="row">
-          <button className="choice" onClick={() => act.run().then(() => ops.pluginsAction("marketplace", undefined, ["list"]).then(act.setOut as (v: any) => void).catch((e: Error) => act.setOut({ error: e.message } as never)))}>marketplace list</button>
-        </div>
-        {list.err && <p className="err">{list.err}</p>}
-        <JsonOut value={list.out} />
-        <JsonOut value={act.out} />
-      </div>
-    </div>
-  );
-}
-
-function OpsPanel() {
-  const [log, setLog] = useState("");
-  const trace = usePanel(() => Promise.resolve(null as unknown));
-  const msgs = usePanel(() => ops.messages());
-  const schema = usePanel(() => ops.schema());
-  const sandbox = usePanel(() => ops.sandbox());
-  const version = usePanel(() => ops.cliVersion());
-  const config = usePanel(() => ops.configStatus());
-  const [target, setTarget] = useState("");
-  const [message, setMessage] = useState("");
-  const send = usePanel(() => Promise.resolve(null as unknown));
-  const init = usePanel(() => Promise.resolve(null as unknown));
-  const [expSession, setExpSession] = useState("");
-  const exp = usePanel(() => Promise.resolve(null as unknown));
-  return (
-    <div className="thread">
-      <div className="msg agent">
-        <div className="who">Auth (`muse login` / `logout` / `auth set`)</div>
-        <p className="hint">Login itself is interactive in a terminal; here you can check status, store a key via stdin (never as argv), or log out.</p>
-        <AuthPanel />
-      </div>
-      <div className="msg agent">
-        <div className="who">Config validate (`muse config validate`)</div>
-        <ValidatePanel />
-      </div>
-      <div className="msg agent">
-        <div className="who">Ops: trace · export · messages · sandbox · schema · auth/config · init</div>
-        <div className="row">
-          <button className="choice" onClick={() => version.run().then(() => ops.cliVersion().then(version.setOut as (v: any) => void))}>Version</button>
-          <button className="choice" onClick={() => config.run().then(() => ops.configStatus().then(config.setOut as (v: any) => void))}>Config status</button>
-          <button className="choice" onClick={() => sandbox.run().then(() => ops.sandbox().then(sandbox.setOut as (v: any) => void))}>Sandbox check</button>
-          <button className="choice" onClick={() => schema.run().then(() => ops.schema().then(schema.setOut as (v: any) => void))}>Schema</button>
-          <button className="choice" onClick={() => init.run().then(() => ops.init(true).then(init.setOut as (v: any) => void))}>Init --dry-run</button>
-        </div>
-        <JsonOut value={version.out} />
-        <JsonOut value={config.out} />
-        <JsonOut value={sandbox.out} />
-        <JsonOut value={schema.out} />
-        <JsonOut value={init.out} />
-      </div>
-      <div className="msg agent">
-        <div className="who">Trace inspect</div>
-        <div className="row">
-          <input className="feedback" value={log} onChange={(e) => setLog(e.target.value)} placeholder="session-log .jsonl path" />
-          <button className="choice" onClick={() => trace.run().then(() => ops.trace(log).then(trace.setOut as (v: any) => void).catch((e: Error) => trace.setOut({ error: e.message } as never)))}>Inspect</button>
-        </div>
-        <JsonOut value={trace.out} />
-      </div>
-      <div className="msg agent">
-        <div className="who">Export session</div>
-        <div className="row">
-          <input className="feedback" value={expSession} onChange={(e) => setExpSession(e.target.value)} placeholder="session id" />
-          <button className="choice" onClick={() => exp.run().then(() => ops.cliExport(expSession).then(exp.setOut as (v: any) => void).catch((e: Error) => exp.setOut({ error: e.message } as never)))}>Export --last fallback</button>
-        </div>
-        <JsonOut value={exp.out} />
-      </div>
-      <div className="msg agent">
-        <div className="who">Cross-session messages</div>
-        <div className="row">
-          <button className="choice" onClick={() => msgs.run().then(() => ops.messages().then(msgs.setOut as (v: any) => void))}>List</button>
-          <input className="feedback" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="target session uuid/name" />
-          <input className="feedback" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="message" />
-          <button className="choice" onClick={() => send.run().then(() => ops.messageSend(target, message).then(send.setOut as (v: any) => void).catch((e: Error) => send.setOut({ error: e.message } as never)))}>Send</button>
-        </div>
-        <JsonOut value={msgs.out} />
-        <JsonOut value={send.out} />
-      </div>
-    </div>
-  );
-}
-
 function SelfUpdate() {
   const [repo, setRepo] = useStored("openmuse.repo", "");
   const [st, setSt] = useState<any>(null);
@@ -1297,50 +1011,32 @@ function SettingsPanel() {
 }
 
 function AuthPanel() {
-  const st = usePanel(() => ops.authStatus());
-  const out = usePanel(() => Promise.resolve(null as unknown));
+  const [statusOut, setStatusOut] = useState<unknown>(null);
+  const [actionOut, setActionOut] = useState<unknown>(null);
   const [key, setKey] = useState("");
   const [provider, setProvider] = useState("");
   return (
     <div>
       <div className="row">
-        <button className="choice" onClick={() => st.run().then(() => ops.authStatus().then(st.setOut as (v: any) => void))}>Status</button>
-        <button className="choice" onClick={() => out.run().then(() => ops.authLogout().then(out.setOut as (v: any) => void))}>Logout</button>
+        <button className="choice" onClick={() => ops.authStatus().then(setStatusOut).catch((e: Error) => setStatusOut({ error: e.message }))}>Status</button>
+        <button className="choice" onClick={() => ops.authLogout().then(setActionOut).catch((e: Error) => setActionOut({ error: e.message }))}>Logout</button>
       </div>
       <div className="row">
         <input className="feedback" type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="API key (sent via stdin)" />
         <input className="feedback" value={provider} onChange={(e) => setProvider(e.target.value)} placeholder="provider (optional)" />
-        <button className="choice" onClick={() => out.run().then(() => ops.authSet(key, provider || undefined).then((r) => { setKey(""); return r; }).then(out.setOut as (v: any) => void).catch((e: Error) => out.setOut({ error: e.message } as never)))}>Store key</button>
+        <button className="choice" onClick={() => ops.authSet(key, provider || undefined).then((r) => { setKey(""); return r; }).then(setActionOut).catch((e: Error) => setActionOut({ error: e.message }))}>Store key</button>
       </div>
-      <JsonOut value={st.out} />
-      <JsonOut value={out.out} />
-    </div>
-  );
-}
-
-function ValidatePanel() {
-  const [plane, setPlane] = useState("defaults");
-  const [file, setFile] = useState("");
-  const p = usePanel(() => Promise.resolve(null as unknown));
-  return (
-    <div>
-      <div className="row">
-        <select className="pill select" value={plane} onChange={(e) => setPlane(e.target.value)}>
-          <option value="defaults">defaults</option>
-          <option value="policy">policy</option>
-        </select>
-        <input className="feedback" value={file} onChange={(e) => setFile(e.target.value)} placeholder="config file path on server" />
-        <button className="choice" onClick={() => p.run().then(() => ops.configValidate(plane, file).then(p.setOut as (v: any) => void).catch((e: Error) => p.setOut({ error: e.message } as never)))}>Validate</button>
-      </div>
-      <JsonOut value={p.out} />
+      <JsonOut value={statusOut} />
+      <JsonOut value={actionOut} />
     </div>
   );
 }
 
 function AccountPanel({ model, effort, approvalMode, workspace }: { model: string; effort: string; approvalMode: string; workspace: string }) {
-  const cfg = usePanel(() => ops.configStatus());
+  const [cfgOut, setCfgOut] = useState<unknown>(null);
+  const [cfgErr, setCfgErr] = useState<string | null>(null);
   useEffect(() => {
-    cfg.run();
+    ops.configStatus().then(setCfgOut).catch((e: Error) => setCfgErr(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const provider = localStorage.getItem("openmuse.provider") || "meta (default)";
@@ -1350,8 +1046,8 @@ function AccountPanel({ model, effort, approvalMode, workspace }: { model: strin
         <div className="who">Account profile</div>
         <p className="hint">Who is OpenMuse acting as, and with what defaults. Keys stay on this machine; login itself happens in your terminal via `muse login`.</p>
         <pre className="tbody out">{`provider: ${provider}\nmodel: ${model || "auto"}\neffort: ${effort || "auto"}\napproval: ${approvalMode}\nworkspace: ${workspace || "server default"}`}</pre>
-        <JsonOut value={cfg.out} />
-        {cfg.err && <p className="err">{cfg.err}</p>}
+        <JsonOut value={cfgOut} />
+        {cfgErr && <p className="err">{cfgErr}</p>}
       </div>
       <div className="msg agent">
         <div className="who">Credentials (`muse login` / `logout` / `auth set`)</div>
@@ -1374,7 +1070,7 @@ function SettingRow({ storageKey, label }: { storageKey: string; label: string }
 // into a per-run thinking block (see threading.ts). Unknown kinds render
 // generically per the MSP spec, so any wire item with an id + kind is kept.
 
-type Tab = "chat" | "sessions" | "exec" | "skills" | "plugins" | "ops" | "settings" | "account";
+type Tab = "chat" | "settings" | "account";
 
 function useStored(key: string, initial: string) {
   const [value, setValue] = useState(() => localStorage.getItem(key) || initial);
@@ -2074,13 +1770,6 @@ export default function App() {
         <button className="newbtn" onClick={() => { setTab("chat"); newSession(); }}>
           <span aria-hidden>+</span> New chat
         </button>
-        <nav className="navlist">
-          {([["chat", "Chats"], ["sessions", "Sessions"], ["exec", "Exec"], ["skills", "Skills"], ["plugins", "Plugins"], ["ops", "System"]] as [Tab, string][]).map(([t, label]) => (
-            <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
-              {label}
-            </button>
-          ))}
-        </nav>
         <div className="conn" data-ok={status.connected}>
           {status.mock ? "demo host" : status.connected ? "muse connected" : "muse unreachable"}
         </div>
@@ -2203,17 +1892,7 @@ export default function App() {
             </div>
           </>
         )}
-        {tab === "sessions" ? (
-          <SessionsPanel sessionId={sessionId} />
-        ) : tab === "exec" ? (
-          <ExecPanel workspace={workspace} model={model} effort={effort} />
-        ) : tab === "skills" ? (
-          <SkillsPanel />
-        ) : tab === "plugins" ? (
-          <PluginsPanel />
-        ) : tab === "ops" ? (
-          <OpsPanel />
-        ) : tab === "settings" ? (
+        {tab === "settings" ? (
           <SettingsPanel />
         ) : tab === "account" ? (
           <AccountPanel model={model} effort={effort} approvalMode={approvalMode} workspace={workspace} />
