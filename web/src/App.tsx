@@ -390,7 +390,10 @@ function Composer({
   const readyCount = attachments.filter((a) => a.ready && !a.error).length;
   const canSend = !!input.trim() || readyCount > 0;
   const modelOptions = models.includes(DEFAULT_MODEL) ? models : [DEFAULT_MODEL, ...models];
-  const summary = `${folderName} · ${model} · ${effort ? `Effort: ${effort}` : "Auto"} · ${APPROVAL_LABELS[approvalMode] || approvalMode}`;
+  const approvalLabel = APPROVAL_LABELS[approvalMode] || approvalMode;
+  const effortLabel = effort || "Auto";
+  const modelEffort = `${model} · ${effortLabel}`;
+  const modelEffortTitle = `Model ${model} · Effort ${effortLabel}`;
 
   return (
     <div
@@ -477,7 +480,17 @@ function Composer({
           title="Session settings: folder, model, effort, approval"
         >
           <SlidersIcon />
-          <span className="sum">{summary}</span>
+          <span className="sumchips">
+            <span className="sumchip" title={folderPath || folderName}>
+              {folderName}
+            </span>
+            <span className="sumchip" title={modelEffortTitle}>
+              {modelEffort}
+            </span>
+            <span className={approvalMode === "allowAll" ? "sumchip warn" : "sumchip"} title={`Approval ${approvalLabel}`}>
+              {approvalLabel}
+            </span>
+          </span>
           <span className="chev" aria-hidden>
             ▾
           </span>
@@ -505,48 +518,60 @@ function Composer({
         <>
           <div className="menuveil" onClick={() => setSettingsOpen(false)} />
           <div className="settingspop">
-            <div className="sprow">
-              <span>Folder</span>
-              <button className="mini" onClick={onPickFolder} title={folderPath || "Server default folder"}>
-                {folderName}
-              </button>
+            <div className="spblock">
+              <div className="sprow">
+                <span>Folder</span>
+                <button className="mini" onClick={onPickFolder} title={folderPath || "Server default folder"}>
+                  {folderName}
+                </button>
+              </div>
+              <p className="sphint">New chats run in this folder.</p>
             </div>
-            <div className="sprow">
-              <span>Model</span>
-              <select className="pill select" value={model} onChange={(e) => onModel(e.target.value)} title="Model">
-                {modelOptions.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
+            <div className="spblock">
+              <div className="sprow">
+                <span>Model</span>
+                <select className="pill select" value={model} onChange={(e) => onModel(e.target.value)} title="Model">
+                  {modelOptions.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="sphint">Pinned model for this session.</p>
             </div>
-            <div className="sprow">
-              <span>Effort</span>
-              <select className="pill select" value={effort} onChange={(e) => onEffort(e.target.value)} title="Reasoning effort">
-                <option value="">Auto</option>
-                <option value="none">none</option>
-                <option value="minimal">minimal</option>
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-                <option value="xhigh">xhigh</option>
-                <option value="ultra">ultra</option>
-              </select>
+            <div className="spblock">
+              <div className="sprow">
+                <span>Effort</span>
+                <select className="pill select" value={effort} onChange={(e) => onEffort(e.target.value)} title="Reasoning effort">
+                  <option value="">Auto</option>
+                  <option value="none">none</option>
+                  <option value="minimal">minimal</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                  <option value="xhigh">xhigh</option>
+                  <option value="ultra">ultra</option>
+                </select>
+              </div>
+              <p className="sphint">Higher effort reasons longer.</p>
             </div>
-            <div className="sprow">
-              <span>Approval</span>
-              <select
-                className="pill select"
-                value={approvalMode}
-                onChange={(e) => onApproval(e.target.value)}
-                title="Approval enforcement"
-              >
-                <option value="denyUnmatched">Deny new</option>
-                <option value="onRequest">Ask</option>
-                <option value="promptUnmatched">Ask new</option>
-                <option value="allowAll">Auto-accept</option>
-              </select>
+            <div className="spblock">
+              <div className="sprow">
+                <span>Approval</span>
+                <select
+                  className="pill select"
+                  value={approvalMode}
+                  onChange={(e) => onApproval(e.target.value)}
+                  title="Approval enforcement"
+                >
+                  <option value="denyUnmatched">Deny new</option>
+                  <option value="onRequest">Ask</option>
+                  <option value="promptUnmatched">Ask new</option>
+                  <option value="allowAll">Auto-accept</option>
+                </select>
+              </div>
+              <p className="sphint">Auto-accept runs tools without asking.</p>
             </div>
           </div>
         </>
