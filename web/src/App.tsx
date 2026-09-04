@@ -260,25 +260,52 @@ function ApprovalCard({ a, onDecide }: { a: Approval; onDecide: (a: Approval, ch
   );
 }
 
+function questionBounds(qq: Question): { min: number; max: number } {
+  const multi = qq.selection.mode === "multiple";
+  const min = qq.selection.minSelections ?? 1;
+  const max = qq.selection.maxSelections ?? (multi ? qq.options.length : 1);
+  return { min, max };
+}
+
+function questionReady(qq: Question, sel: string[], ft: string): boolean {
+  if (ft.trim()) return true;
+  const { min, max } = questionBounds(qq);
+  return sel.length >= min && sel.length <= max;
+}
+
+function requirementText(qq: Question, count: number, overridden: boolean): string {
+  if (overridden) return "free text overrides selections above";
+  const { min, max } = questionBounds(qq);
+  if (min === max) return `${count} of ${max} selected`;
+  return `${count} selected · ${min}–${max} required`;
+}
+
 function QuestionCard({ q, onAnswer, onCancel }: { q: InputPrompt; onAnswer: (answers: any[]) => void; onCancel: () => void }) {
   const [picked, setPicked] = useState<Record<string, string[]>>({});
   const [free, setFree] = useState<Record<string, string>>({});
 
-  function toggle(qid: string, label: string, multi: boolean) {
+  function toggle(qid: string, label: string, multi: boolean, max: number) {
     setPicked((p) => {
       const cur = p[qid] || [];
-      if (multi) return { ...p, [qid]: cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label] };
+      if (cur.includes(label)) return { ...p, [qid]: cur.filter((l) => l !== label) };
+      if (multi) {
+        if (cur.length >= max) return p;
+        return { ...p, [qid]: [...cur, label] };
+      }
       return { ...p, [qid]: [label] };
     });
   }
 
+  const ready = q.questions.every((qq) => questionReady(qq, picked[qq.id] || [], free[qq.id] || ""));
+
   function submit() {
+    if (!ready) return;
     const answers = q.questions.map((qq) => {
       const sel = picked[qq.id] || [];
       const ft = (free[qq.id] || "").trim();
       if (ft) return { questionId: qq.id, freeText: ft.slice(0, 500) };
       if (qq.selection.mode === "multiple") return { questionId: qq.id, selectedLabels: sel };
-      return { questionId: qq.id, selectedLabel: sel[0] || (qq.options[0] && qq.options[0].label) };
+      return { questionId: qq.id, selectedLabel: sel[0] };
     });
     onAnswer(answers);
   }
@@ -286,32 +313,40 @@ function QuestionCard({ q, onAnswer, onCancel }: { q: InputPrompt; onAnswer: (an
   return (
     <div className="question">
       <div className="who">Question · {q.toolName}</div>
-      {q.questions.map((qq) => (
-        <div key={qq.id} className="qblock">
-          <p className="qtext">
-            <strong>{qq.header}:</strong> {qq.question}
-          </p>
-          <div className="row">
-            {qq.options.map((o) => {
-              const multi = qq.selection.mode === "multiple";
-              const on = (picked[qq.id] || []).includes(o.label);
-              return (
-                <button key={o.label} className={on ? "choice on" : "choice"} onClick={() => toggle(qq.id, o.label, multi)} title={o.description}>
-                  {o.label}
-                </button>
-              );
-            })}
+      {q.questions.map((qq) => {
+        const sel = picked[qq.id] || [];
+        const ft = free[qq.id] || "";
+        const overridden = !!ft.trim();
+        const { max } = questionBounds(qq);
+        const multi = qq.selection.mode === "multiple";
+        return (
+          <div key={qq.id} className="qblock">
+            <p className="qtext">
+              <strong>{qq.header}:</strong> {qq.question}
+            </p>
+            <div className="row">
+              {qq.options.map((o) => {
+                const on = sel.includes(o.label);
+                return (
+                  <button key={o.label} className={on ? "choice on" : "choice"} onClick={() => toggle(qq.id, o.label, multi, max)} title={o.description}>
+                    {o.label}
+                  </button>
+                );
+              })}
+            </div>
+            <span className="hint">{requirementText(qq, sel.length, overridden)}</span>
+            <input
+              className="feedback"
+              value={ft}
+              onChange={(e) => setFree((f) => ({ ...f, [qq.id]: e.target.value }))}
+              placeholder="Or type an answer instead (overrides selections above)"
+              aria-label="Free-text answer (overrides selections above)"
+            />
           </div>
-          <input
-            className="feedback"
-            value={free[qq.id] || ""}
-            onChange={(e) => setFree((f) => ({ ...f, [qq.id]: e.target.value }))}
-            placeholder="Or type an answer instead"
-          />
-        </div>
-      ))}
+        );
+      })}
       <div className="row">
-        <button className="primary" onClick={submit}>
+        <button className="primary" onClick={submit} disabled={!ready} title={ready ? undefined : "Select the required options or type an answer"}>
           Answer
         </button>
         <button className="ghost" onClick={onCancel}>
