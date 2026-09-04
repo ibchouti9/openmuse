@@ -293,9 +293,6 @@ function Composer({
   attachments,
   onAddFiles,
   onRemoveAttachment,
-  gitBadge,
-  gitDirty,
-  onGitClick,
 }: {
   input: string;
   setInput: (s: string) => void;
@@ -315,9 +312,6 @@ function Composer({
   attachments: Attachment[];
   onAddFiles: (files: File[]) => void;
   onRemoveAttachment: (id: string) => void;
-  gitBadge: string | null;
-  gitDirty: boolean;
-  onGitClick: () => void;
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -405,16 +399,6 @@ function Composer({
         <button className="iconbtn" onClick={() => fileRef.current?.click()} title="Attach images or text files">
           +
         </button>
-        {gitBadge != null && (
-          <button
-            className={`gitbadge${gitDirty ? " dirty" : ""}`}
-            onClick={onGitClick}
-            title={gitDirty ? "Uncommitted changes — open git actions" : "Git status — open git actions"}
-          >
-            <span className="gitdot" aria-hidden />
-            {gitBadge}
-          </button>
-        )}
         <button
           className="settingbtn"
           onClick={() => setSettingsOpen((v) => !v)}
@@ -1385,7 +1369,9 @@ export default function App() {
           if (p.mode) setApprovalMode(p.mode);
           break;
         case "session/modelChanged":
-          if (p.modelId) setModel(p.modelId);
+          // Leave the picker on the user's own choice ("Auto" unless they
+          // picked a model). Adopting the host-reported name here would
+          // re-pin the selector to a concrete model on its own.
           break;
         case "item/started":
         case "item/updated":
@@ -1460,7 +1446,6 @@ export default function App() {
           const u = p.usage || {};
           const c = p.cumulative || {};
           setUsage({ inTok: c.promptTokens ?? u.inputTokens ?? 0, outTok: c.outputTokens ?? u.outputTokens ?? 0, model: p.modelId });
-          if (p.modelId) setModel((m) => m || p.modelId);
           break;
         }
         case "session/contextUsage":
@@ -1770,9 +1755,6 @@ export default function App() {
         <button className="newbtn" onClick={() => { setTab("chat"); newSession(); }}>
           <span aria-hidden>+</span> New chat
         </button>
-        <div className="conn" data-ok={status.connected}>
-          {status.mock ? "demo host" : status.connected ? "muse connected" : "muse unreachable"}
-        </div>
         <nav className="sess chats">
           <div className="sess-h">Chats</div>
           <input
@@ -1939,12 +1921,6 @@ export default function App() {
                 attachments={attachments}
                 onAddFiles={addFiles}
                 onRemoveAttachment={removeAttachment}
-                gitBadge={git?.repo ? `${git.branch || "?"}${gitChanges > 0 ? ` · ${gitChanges}` : " · clean"}` : null}
-                gitDirty={git?.repo === true && gitChanges > 0}
-                onGitClick={() => {
-                  setGitOpen(true);
-                  refreshGit();
-                }}
               />
             </div>
             {picking && <WorkspacePicker initial={workspace} onPick={chooseWorkspace} onClose={() => setPicking(false)} />}
@@ -2060,12 +2036,6 @@ export default function App() {
                 attachments={attachments}
                 onAddFiles={addFiles}
                 onRemoveAttachment={removeAttachment}
-                gitBadge={git?.repo ? `${git.branch || "?"}${gitChanges > 0 ? ` · ${gitChanges}` : " · clean"}` : null}
-                gitDirty={git?.repo === true && gitChanges > 0}
-                onGitClick={() => {
-                  setGitOpen(true);
-                  refreshGit();
-                }}
               />
             </div>
             {picking && <WorkspacePicker initial={workspace} onPick={chooseWorkspace} onClose={() => setPicking(false)} />}
