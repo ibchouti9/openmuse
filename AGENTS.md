@@ -14,3 +14,4 @@
 ## Conventions
 
 - Use CommonJS `require()` for imports in Node code.
+- Use ESM `import` for imports in web code.
