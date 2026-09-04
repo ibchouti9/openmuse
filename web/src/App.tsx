@@ -219,6 +219,12 @@ function ApprovalCard({ a, onDecide }: { a: Approval; onDecide: (a: Approval, ch
     <div className="approval" role="group" aria-label={`Approval request for ${a.toolName}`} aria-busy={busy} onKeyDown={onKeyDown}>
       <div className="who">Needs approval · {a.toolName}</div>
       <pre className="body">{renderSubject(a.subject)}</pre>
+      {a.rawArgs && (
+        <details className="rawargs">
+          <summary>Arguments</summary>
+          <pre className="body">{a.rawArgs}</pre>
+        </details>
+      )}
       {choices.map((c) => c.rulePreview).filter(Boolean)[0] && (
         <p className="rule">{choices.map((c) => c.rulePreview).filter(Boolean)[0]}</p>
       )}
@@ -470,6 +476,7 @@ function Composer({
         </div>
       )}
       <textarea
+        id="composer-input"
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={(e) => {
@@ -490,8 +497,9 @@ function Composer({
             onAddFiles(files);
           }
         }}
-        placeholder="How can Muse help you today? Paste images or drop files anywhere here."
+        placeholder="How can Muse help you today? Paste images or drop files anywhere here. (Enter to send, Shift+Enter for newline)"
         rows={2}
+        title="Enter to send · Shift+Enter for newline · Cmd/Ctrl+K focuses here"
       />
       <div className="bar single">
         <input
@@ -974,6 +982,9 @@ export function ThinkingBlock({
         <div ref={bodyRef} className="thinkbody">
           {entries.map((entry, i) => {
             const active = streamingId === entry.itemId || entry.status === "inProgress";
+            const isTool = entry.kind === "toolCall";
+            const cmd = isTool ? parseArgs(entry.args) : "";
+            const out = isTool ? (entry.visibleOutput || "").trim() : "";
             return (
               <div key={entry.itemId} className={`thinkrow${active ? " active" : ""}`}>
                 <span className="thinkstep" aria-hidden>
@@ -981,7 +992,15 @@ export function ThinkingBlock({
                 </span>
                 <div className="thinkmain">
                   <div className="thinklabel">{thinkingLabel(entry)}</div>
-                  {thinkingDetail(entry) && <pre className="thinktext">{thinkingDetail(entry)}</pre>}
+                  {isTool ? (
+                    <>
+                      {cmd && <pre className="thinkcmd">{cmd}</pre>}
+                      {out && <pre className="thinktext">{out}</pre>}
+                      {!cmd && !out && thinkingDetail(entry) && <pre className="thinktext">{thinkingDetail(entry)}</pre>}
+                    </>
+                  ) : (
+                    thinkingDetail(entry) && <pre className="thinktext">{thinkingDetail(entry)}</pre>
+                  )}
                 </div>
               </div>
             );
@@ -1202,6 +1221,7 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [chatFilter, setChatFilter] = useState("");
+  const [transcriptFilter, setTranscriptFilter] = useState("");
   const daypart = (() => {
     const h = new Date().getHours();
     return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
@@ -1935,6 +1955,69 @@ export default function App() {
   // (and collapse state) survives unrelated re-renders.
   const blocks = useMemo(() => groupThread(items), [items]);
 
+  // Transcript search: client-side filter over rendered text (no protocol
+  // change). Thinking blocks match when any entry's label/detail matches.
+  const needle = transcriptFilter.trim().toLowerCase();
+  const visibleBlocks = useMemo(() => {
+    if (!needle) return blocks;
+    return blocks.filter((b) => {
+      if (b.type === "thinking") {
+        return b.entries.some((e) => `${thinkingLabel(e)} ${thinkingDetail(e)}`.toLowerCase().includes(needle));
+      }
+      return (b.item.text || "").toLowerCase().includes(needle);
+    });
+  }, [blocks, needle]);
+
+  // Retry: re-send the last user message text via the existing turn/start
+  // REST endpoint (protocol-supported). Text attachments were already
+  // inlined into that text; images are not re-attached on retry.
+  async function retryLast() {
+    if (busy || !sessionId) return;
+    const last = [...itemsRef.current].reverse().find((w) => w.kind === "userMessage" && w.text.trim());
+    if (!last) {
+      setError("Nothing to retry yet");
+      return;
+    }
+    setError(null);
+    try {
+      const body: any = { sessionId, text: last.text };
+      if (effort) body.reasoningEffort = effort;
+      await api("/api/turn", { method: "POST", body: JSON.stringify(body) });
+      setBusy(true);
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  // Shortcuts: "/" focuses transcript search, Cmd/Ctrl+K focuses the
+  // composer, Escape clears the search. Skipped inside form fields (except
+  // Escape) so approval/question inputs keep their own keys.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null;
+      const inField = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT");
+      if (e.key === "Escape") {
+        if (document.activeElement && (document.activeElement.id === "transcript-search")) {
+          setTranscriptFilter("");
+          (document.activeElement as HTMLElement).blur();
+        }
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        document.getElementById("composer-input")?.focus();
+        return;
+      }
+      if (inField || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "/" && sessionId) {
+        e.preventDefault();
+        document.getElementById("transcript-search")?.focus();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sessionId]);
+
   return (
     <div className="shell">
       <aside className="side">
@@ -2126,7 +2209,16 @@ export default function App() {
                   return s ? titleFor(s) : "Chat";
                 })()}
               </span>
+              <span
+                className="chead-meta"
+                title={`Model ${model} · Effort ${effort || "Auto"} · Approval ${APPROVAL_LABELS[approvalMode] || approvalMode}`}
+              >
+                {model} · {effort || "Auto"} · {APPROVAL_LABELS[approvalMode] || approvalMode}
+              </span>
               <span className="spacer" />
+              <button className="mini" onClick={retryLast} disabled={busy || !sessionId} title="Re-send the last user message (same model/effort)">
+                Retry
+              </button>
               <button
                 className="mini"
                 onClick={async () => {
@@ -2166,6 +2258,27 @@ export default function App() {
                 <div className="ctxfill" style={{ width: `${ctxPct}%` }} />
               </div>
             )}
+            <div className="chead-sub">
+              <input
+                id="transcript-search"
+                className="tsearch"
+                value={transcriptFilter}
+                onChange={(e) => setTranscriptFilter(e.target.value)}
+                placeholder="Search transcript… ( / )"
+                title="Filter messages and tool activity in this chat (/ focuses, Esc clears)"
+                aria-label="Search transcript"
+              />
+              {needle && (
+                <span className="matchnote" aria-live="polite">
+                  {visibleBlocks.length} of {blocks.length} shown
+                </span>
+              )}
+              {needle && (
+                <button className="mini" onClick={() => setTranscriptFilter("")} title="Clear transcript search (Esc)">
+                  Clear
+                </button>
+              )}
+            </div>
             <div
               ref={threadRef}
               className="thread"
@@ -2175,7 +2288,10 @@ export default function App() {
                 stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
               }}
             >
-              {blocks.map((b) =>
+              {needle && visibleBlocks.length === 0 && (
+                <p className="hint">No matches for “{transcriptFilter.trim()}”.</p>
+              )}
+              {visibleBlocks.map((b) =>
                 b.type === "thinking" ? (
                   <ThinkingBlock key={b.key} entries={b.entries} streamingId={streaming} />
                 ) : (
@@ -2208,6 +2324,11 @@ export default function App() {
               <div ref={bottomRef} />
             </div>
             {error && <p className="err">{error}</p>}
+            {approvalMode === "allowAll" && (
+              <p className="hint trusthint" title="Auto-accept runs tools without asking">
+                Auto-accept is on: tools run without asking. Switch to Ask in the composer settings to approve each tool.
+              </p>
+            )}
             <div className="composer">
               <Composer
                 input={input}
