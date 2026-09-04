@@ -1093,43 +1093,54 @@ function SelfUpdate() {
   );
 }
 
+type SettingSpec =
+  | { key: string; label: string; kind: "text" }
+  | { key: string; label: string; kind: "select"; options: string[]; emptyLabel: string }
+  | { key: string; label: string; kind: "toggle" }
+  | { key: string; label: string; kind: "flag" }
+  | { key: string; label: string; kind: "number"; min?: number; integer?: boolean };
+
+// Typed controls mirror the `muse` startup-arg allowlists. Selects constrain
+// values by construction; free text remains only where the value is genuinely
+// open-ended (paths, URLs, ids, JSON, multi-flag lists).
+const SETTING_FIELDS: SettingSpec[] = [
+  { key: "openmuse.provider", label: "provider", kind: "select", options: ["echo", "meta"], emptyLabel: "(default)" },
+  { key: "openmuse.preset", label: "preset", kind: "select", options: ["native-basic", "miniswe"], emptyLabel: "(default)" },
+  { key: "openmuse.model", label: "model id", kind: "text" },
+  { key: "openmuse.effort", label: "reasoning effort", kind: "select", options: ["none", "minimal", "low", "medium", "high", "xhigh", "ultra"], emptyLabel: "Auto" },
+  { key: "openmuse.baseUrl", label: "provider base URL", kind: "text" },
+  { key: "openmuse.image", label: "image path (repeatable; comma-separated)", kind: "text" },
+  { key: "openmuse.workspace", label: "workspace path", kind: "text" },
+  { key: "openmuse.worktree", label: "worktree", kind: "select", options: ["off", "create", "existing"], emptyLabel: "(default)" },
+  { key: "openmuse.worktreeBase", label: "worktree base ref", kind: "text" },
+  { key: "openmuse.worktreeExisting", label: "existing worktree path", kind: "text" },
+  { key: "openmuse.parallelCalls", label: "parallel tool calls", kind: "toggle" },
+  { key: "openmuse.compaction", label: "compaction strategy id", kind: "text" },
+  { key: "openmuse.compactionSoft", label: "compaction soft threshold", kind: "number", min: 0, integer: true },
+  { key: "openmuse.compactionHard", label: "compaction hard threshold", kind: "number", min: 0, integer: true },
+  { key: "openmuse.maxSteps", label: "max model steps", kind: "number", min: 1, integer: true },
+  { key: "openmuse.maxToolBytes", label: "max tool output bytes", kind: "number", min: 1, integer: true },
+  { key: "openmuse.sessionId", label: "session id (fixed)", kind: "text" },
+  { key: "openmuse.permissionProfile", label: "permission profile id", kind: "text" },
+  { key: "openmuse.approvalJudge", label: "approval judge", kind: "toggle" },
+  { key: "openmuse.sandboxNetwork", label: "sandbox network", kind: "select", options: ["restricted", "enabled", "proxy-only"], emptyLabel: "(default)" },
+  { key: "openmuse.safety", label: "safety flags shown (yolo|trust-workspace|disable-approval|disable-sandbox|disable-write|disable-shell)", kind: "text" },
+  { key: "openmuse.noSessionLog", label: "no session log", kind: "flag" },
+  { key: "openmuse.agents", label: "ephemeral agent-definition overlay (JSON)", kind: "text" },
+  { key: "openmuse.echoDelay", label: "echo delay ms", kind: "number", min: 0, integer: true },
+  { key: "openmuse.subagentIsolation", label: "subagent worktree isolation", kind: "flag" },
+  { key: "openmuse.disableWeb", label: "disable web tools", kind: "flag" },
+  { key: "openmuse.noForeignCtx", label: "exclude foreign personal context", kind: "flag" },
+];
+
 function SettingsPanel() {
-  const fields: [string, string][] = [
-    ["openmuse.provider", "provider (echo|meta)"],
-    ["openmuse.preset", "preset (native-basic|miniswe)"],
-    ["openmuse.model", "model id"],
-    ["openmuse.effort", "reasoning effort (none|minimal|low|medium|high|xhigh|ultra)"],
-    ["openmuse.baseUrl", "provider base URL"],
-    ["openmuse.image", "image path (repeatable; comma-separated)"],
-    ["openmuse.workspace", "workspace path"],
-    ["openmuse.worktree", "worktree (off|create|existing)"],
-    ["openmuse.worktreeBase", "worktree base ref"],
-    ["openmuse.worktreeExisting", "existing worktree path"],
-    ["openmuse.parallelCalls", "parallel tool calls (on|off)"],
-    ["openmuse.compaction", "compaction strategy id"],
-    ["openmuse.compactionSoft", "compaction soft threshold"],
-    ["openmuse.compactionHard", "compaction hard threshold"],
-    ["openmuse.maxSteps", "max model steps"],
-    ["openmuse.maxToolBytes", "max tool output bytes"],
-    ["openmuse.sessionId", "session id (fixed)"],
-    ["openmuse.permissionProfile", "permission profile id"],
-    ["openmuse.approvalJudge", "approval judge (on|off)"],
-    ["openmuse.sandboxNetwork", "sandbox network (restricted|enabled|proxy-only)"],
-    ["openmuse.safety", "safety flags shown (yolo|trust-workspace|disable-approval|disable-sandbox|disable-write|disable-shell)"],
-    ["openmuse.noSessionLog", "no session log (1)"],
-    ["openmuse.agents", "ephemeral agent-definition overlay (JSON)"],
-    ["openmuse.echoDelay", "echo delay ms"],
-    ["openmuse.subagentIsolation", "subagent worktree isolation (1)"],
-    ["openmuse.disableWeb", "disable web tools (1)"],
-    ["openmuse.noForeignCtx", "exclude foreign personal context (1)"],
-  ];
   return (
     <div className="thread">
       <div className="msg agent">
         <div className="who">Settings (mirrors `muse` startup args)</div>
         <p className="hint">Stored locally and applied to new sessions and exec runs. Dangerous flags are shown per workspace choice.</p>
-        {fields.map(([key, label]) => (
-          <SettingRow key={key} storageKey={key} label={label} />
+        {SETTING_FIELDS.map((f) => (
+          <SettingField key={f.key} spec={f} />
         ))}
       </div>
       <div className="msg agent">
@@ -1191,11 +1202,125 @@ function AccountPanel({ model, effort, approvalMode, workspace }: { model: strin
   );
 }
 
+function SettingField({ spec }: { spec: SettingSpec }) {
+  switch (spec.kind) {
+    case "select":
+      return <SettingSelect storageKey={spec.key} label={spec.label} options={spec.options} emptyLabel={spec.emptyLabel} />;
+    case "toggle":
+      return <SettingToggle storageKey={spec.key} label={spec.label} />;
+    case "flag":
+      return <SettingFlag storageKey={spec.key} label={spec.label} />;
+    case "number":
+      return <SettingNumber storageKey={spec.key} label={spec.label} min={spec.min} integer={spec.integer} />;
+    default:
+      return <SettingRow storageKey={spec.key} label={spec.label} />;
+  }
+}
+
 function SettingRow({ storageKey, label }: { storageKey: string; label: string }) {
   const [value, setValue] = useStored(storageKey, "");
   return (
     <div className="row">
       <input className="feedback" value={value} onChange={(e) => setValue(e.target.value)} placeholder={label} title={storageKey} />
+    </div>
+  );
+}
+
+function SettingSelect({ storageKey, label, options, emptyLabel }: { storageKey: string; label: string; options: string[]; emptyLabel: string }) {
+  const [value, setValue] = useStored(storageKey, "");
+  // A pre-existing stored typo is never silently kept: surface it and offer reset.
+  const stale = value !== "" && !options.includes(value);
+  return (
+    <div className="row">
+      <span className="hint" title={storageKey}>{label}</span>
+      <select
+        className="pill select"
+        value={stale ? "" : value}
+        onChange={(e) => setValue(e.target.value)}
+        title={storageKey}
+        aria-label={`${label} (${storageKey})`}
+      >
+        <option value="">{emptyLabel}</option>
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+      {stale && <p className="err">Stored value “{value}” is not a valid {label}; pick one or leave {emptyLabel} to clear it.</p>}
+    </div>
+  );
+}
+
+function SettingToggle({ storageKey, label }: { storageKey: string; label: string }) {
+  const [value, setValue] = useStored(storageKey, "");
+  const on = value === "on" || value === "1" || value === "true";
+  return (
+    <div className="row">
+      <label title={storageKey}>
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={(e) => setValue(e.target.checked ? "on" : "off")}
+          aria-label={`${label} (${storageKey})`}
+        />{" "}
+        {label} (on|off)
+      </label>
+    </div>
+  );
+}
+
+function SettingFlag({ storageKey, label }: { storageKey: string; label: string }) {
+  const [value, setValue] = useStored(storageKey, "");
+  const on = value === "1";
+  return (
+    <div className="row">
+      <label title={storageKey}>
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={(e) => setValue(e.target.checked ? "1" : "")}
+          aria-label={`${label} (${storageKey})`}
+        />{" "}
+        {label}
+      </label>
+      {value !== "" && !on && <p className="err">Stored value “{value}” is not valid; uncheck to clear, check to set.</p>}
+    </div>
+  );
+}
+
+function SettingNumber({ storageKey, label, min, integer }: { storageKey: string; label: string; min?: number; integer?: boolean }) {
+  const [value, setValue] = useStored(storageKey, "");
+  let err: string | null = null;
+  if (value !== "") {
+    const n = Number(value);
+    if (!Number.isFinite(n)) err = `${label} must be a number.`;
+    else if (integer && !Number.isInteger(n)) err = `${label} must be a whole number.`;
+    else if (min !== undefined && n < min) err = `${label} must be ≥ ${min}.`;
+  }
+  function clamp() {
+    if (value === "") return;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    let v = integer ? Math.round(n) : n;
+    if (min !== undefined) v = Math.max(min, v);
+    if (String(v) !== value) setValue(String(v));
+  }
+  return (
+    <div className="row">
+      <input
+        className="feedback"
+        type="number"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={clamp}
+        placeholder={label}
+        title={storageKey}
+        aria-label={`${label} (${storageKey})`}
+        min={min}
+        step={integer ? 1 : "any"}
+      />
+      {err && <p className="err">{err}</p>}
     </div>
   );
 }
