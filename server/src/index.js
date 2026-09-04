@@ -635,6 +635,75 @@ app.post("/api/auth/set", async (req, res) => {
   }
 });
 
+// ---- git ops for the workspace folder ----
+const gitops = require("./git");
+app.get("/api/git/status", async (req, res) => {
+  try {
+    res.json(await gitops.status(req.query.workspace || ""));
+  } catch (e) {
+    sendError(res, e);
+  }
+});
+app.post("/api/git/commit", async (req, res) => {
+  try {
+    const { workspace, message, push } = req.body || {};
+    res.json(await gitops.commit(workspace || "", message, push === true));
+  } catch (e) {
+    if (/required|nothing to commit|not a git repository|over \d+ characters/i.test(e.message)) {
+      return res.status(400).json({ error: e.message });
+    }
+    sendError(res, e);
+  }
+});
+app.post("/api/git/push", async (req, res) => {
+  try {
+    const { workspace } = req.body || {};
+    res.json(await gitops.push(workspace || ""));
+  } catch (e) {
+    sendError(res, e);
+  }
+});
+app.post("/api/git/pr", async (req, res) => {
+  try {
+    const { workspace, title, body, base, draft } = req.body || {};
+    res.json(await gitops.pr(workspace || "", { title, body, base, draft: draft === true }));
+  } catch (e) {
+    if (/required|uncommitted changes|not a git repository/i.test(e.message)) {
+      return res.status(400).json({ error: e.message });
+    }
+    sendError(res, e);
+  }
+});
+
+// ---- self-update: rebuild the desktop app from a local checkout ----
+const updater = require("./updater");
+app.post("/api/dev/update", (req, res) => {
+  try {
+    const { repo, dryRun } = req.body || {};
+    if (dryRun) {
+      const found = updater.resolveRepo(repo);
+      if (found.error) return res.status(400).json({ error: found.error });
+      return res.json({
+        ok: true,
+        repo: found.repo,
+        plan: ["install-deps", "build (npm run dist)", "quit app", "swap bundle", "relaunch"],
+      });
+    }
+    const r = updater.startUpdate({ repo });
+    if (!r.started) return res.status(400).json({ error: r.error });
+    res.status(202).json(r);
+  } catch (e) {
+    sendError(res, e);
+  }
+});
+app.get("/api/dev/update-status", (req, res) => {
+  try {
+    res.json({ ...updater.readStatus(), logTail: updater.readLogTail() });
+  } catch (e) {
+    sendError(res, e);
+  }
+});
+
 // ---- serve built web UI when present ----
 const dist = process.env.OPENMUSE_WEB_DIR || path.join(__dirname, "..", "..", "web", "dist");
 if (fs.existsSync(path.join(dist, "index.html"))) {

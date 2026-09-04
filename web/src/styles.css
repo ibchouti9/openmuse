@@ -439,24 +439,6 @@ select.pill option {
   animation: rise 160ms ease-out;
 }
 
-.tool .tic {
-  animation: pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
-}
-
-.tool .tbody {
-  font-variant-numeric: tabular-nums;
-}
-
 .usage,
 .curpath {
   font-variant-numeric: tabular-nums;
@@ -574,40 +556,6 @@ select.pill option {
   color: var(--link);
 }
 
-.tool {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  font-size: 13.5px;
-  color: var(--muted);
-}
-
-.tool .tic {
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: var(--card);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--mono);
-  font-size: 12px;
-  flex-shrink: 0;
-  margin-top: 8px;
-}
-
-.tool.streaming .tic {
-  border-color: var(--accent);
-  border-top-color: transparent;
-  animation: spin 0.9s linear infinite;
-}
-
-.tool.done .tic {
-  border-color: var(--good);
-  color: var(--good);
-}
-
 .thinking {
   display: flex;
   gap: 6px;
@@ -633,7 +581,8 @@ select.pill option {
   animation-delay: 0.3s;
 }
 
-.tool .tbody {
+/* Generic pre blocks shared by ops panels (JsonOut, log tails). */
+.tbody {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -646,10 +595,138 @@ select.pill option {
   min-width: 0;
 }
 
-.tool .tbody.out {
+.tbody.out {
   margin-top: 6px;
   color: var(--muted);
   max-height: 200px;
+  overflow: auto;
+}
+
+/* ---------- thinking block: one in-place container per run of ---------- */
+/* intermediate activity (reasoning parts, tool calls, other non-message */
+/* items). Only user/agent messages render as bubbles; everything else  */
+/* appends as rows here instead of posting separate messages.           */
+.think {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  overflow: hidden;
+}
+
+.thinkhead {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 9px 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.thinkhead:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.thinkspin {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--faint);
+  flex-shrink: 0;
+}
+
+.thinkspin.on {
+  border-color: var(--accent);
+  border-top-color: transparent;
+  animation: spin 0.9s linear infinite;
+}
+
+.think:not(.live) .thinkspin {
+  border-color: var(--good);
+  background: var(--good-soft);
+}
+
+.thinktitle {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.thinkcount {
+  font-size: 12px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.thinkchev {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.thinkbody {
+  border-top: 1px solid var(--line);
+  padding: 4px 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.thinkrow {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 7px 13px 7px 18px;
+  font-size: 13px;
+}
+
+.thinkrow + .thinkrow {
+  border-top: 1px dashed var(--line);
+}
+
+.thinkdot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+  flex-shrink: 0;
+  margin-top: 6px;
+}
+
+.thinkrow.active .thinkdot {
+  background: var(--accent);
+  animation: pulse-dot 1.2s ease infinite;
+}
+
+.thinkmain {
+  min-width: 0;
+  flex: 1;
+}
+
+.thinklabel {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.thinkrow.active .thinklabel {
+  color: var(--accent-ink);
+}
+
+.thinktext {
+  margin: 3px 0 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
   overflow: auto;
 }
 
@@ -1960,4 +2037,222 @@ button.chipx:hover {
     border-top: 1px solid var(--line);
     max-height: 52vh;
   }
+}
+
+/* ---------- git feedback + actions ---------- */
+.topbar {
+  gap: 8px;
+}
+
+.topgroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gitdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--good);
+  flex-shrink: 0;
+}
+
+.gitbtn.dirty .gitdot {
+  background: var(--amber);
+}
+
+button.gitbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-variant-numeric: tabular-nums;
+}
+
+button.gitbtn.dirty {
+  color: var(--ink);
+  border-color: var(--amber);
+}
+
+.gitbadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: var(--sans);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.gitbadge:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.gitbadge.dirty {
+  color: var(--ink);
+  border-color: var(--amber);
+}
+
+.gitbadge.dirty .gitdot {
+  background: var(--amber);
+}
+
+.gitpop {
+  position: absolute;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 380px;
+  max-width: calc(100% - 32px);
+  max-height: min(560px, calc(100% - 120px));
+  overflow-y: auto;
+  background: var(--card-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  padding: 14px 14px 12px;
+  z-index: 62;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+
+.gitmenu {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.githead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.githead .spacer {
+  flex: 1;
+}
+
+.gittitle {
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.gitsub {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gitfiles {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 180px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.gitfile {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  font-size: 12.5px;
+  min-width: 0;
+}
+
+.gitcode {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--accent-ink);
+  flex-shrink: 0;
+  min-width: 16px;
+  text-align: center;
+}
+
+.gitcode.st {
+  color: var(--good);
+}
+
+.gitcode.new {
+  color: var(--amber);
+}
+
+.gitpath {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gitnote {
+  margin: 0;
+  padding: 0;
+}
+
+.gitok {
+  color: var(--good);
+  font-size: 13px;
+  font-family: var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+.gitmenu textarea.gitmsg {
+  margin-top: 0;
+}
+
+textarea.feedback.gitmsg {
+  width: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 9px 12px;
+  font-family: var(--sans);
+  font-size: 13.5px;
+  resize: vertical;
+}
+
+textarea.feedback.gitmsg:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.gitrow {
+  margin-bottom: 0;
+}
+
+.gitmenu .gitbtn {
+  flex: 1;
+  white-space: nowrap;
+}
+
+.gitpr {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.gitpr input.feedback {
+  margin-top: 0;
 }

@@ -3,17 +3,9 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { api, exportSession, ops, subscribe, turnCancel } from "./api";
 import BrowserPanel from "./BrowserPanel";
+import { applyItemDelta, genericRowText, groupThread, thinkingLive, ThreadItem } from "./threading";
 
-interface Item {
-  itemId: string;
-  kind: string;
-  text: string;
-  status: string;
-  tool?: string;
-  args?: string;
-  visibleOutput?: string;
-  done: boolean;
-}
+interface Item extends ThreadItem {}
 
 interface Choice {
   choiceId: string;
@@ -103,7 +95,11 @@ function wireToItem(it: any): Item {
     tool: it.tool,
     args: it.args,
     visibleOutput: it.visibleOutput,
-    done: it.status === "completed",
+    summary: Array.isArray(it.summary) ? it.summary.map((s: unknown) => String(s ?? "")) : undefined,
+    fallbackText: typeof it.fallbackText === "string" ? it.fallbackText : undefined,
+    turnId: typeof it.turnId === "string" ? it.turnId : undefined,
+    revision: typeof it.revision === "number" ? it.revision : undefined,
+    done: it.status !== "inProgress",
   };
 }
 
@@ -297,6 +293,9 @@ function Composer({
   attachments,
   onAddFiles,
   onRemoveAttachment,
+  gitBadge,
+  gitDirty,
+  onGitClick,
 }: {
   input: string;
   setInput: (s: string) => void;
@@ -316,6 +315,9 @@ function Composer({
   attachments: Attachment[];
   onAddFiles: (files: File[]) => void;
   onRemoveAttachment: (id: string) => void;
+  gitBadge: string | null;
+  gitDirty: boolean;
+  onGitClick: () => void;
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -403,6 +405,16 @@ function Composer({
         <button className="iconbtn" onClick={() => fileRef.current?.click()} title="Attach images or text files">
           +
         </button>
+        {gitBadge != null && (
+          <button
+            className={`gitbadge${gitDirty ? " dirty" : ""}`}
+            onClick={onGitClick}
+            title={gitDirty ? "Uncommitted changes — open git actions" : "Git status — open git actions"}
+          >
+            <span className="gitdot" aria-hidden />
+            {gitBadge}
+          </button>
+        )}
         <button
           className="settingbtn"
           onClick={() => setSettingsOpen((v) => !v)}
@@ -565,9 +577,252 @@ function WorkspacePicker({ initial, onPick, onClose }: { initial: string; onPick
   );
 }
 
+interface GitStatus {
+  repo: boolean;
+  root?: string;
+  branch?: string | null;
+  upstream?: string | null;
+  ahead?: number;
+  behind?: number;
+  hasRemote?: boolean;
+  staged?: number;
+  unstaged?: number;
+  untracked?: number;
+  total?: number;
+  truncated?: boolean;
+  files?: { path: string; code: string; staged: boolean; unstaged: boolean; untracked: boolean }[];
+}
+
+function GitMenu({
+  status,
+  loading,
+  workspace,
+  onRefresh,
+  onCommit,
+  onPush,
+  onPr,
+  busyAction,
+  note,
+}: {
+  status: GitStatus | null;
+  loading: boolean;
+  workspace: string;
+  onRefresh: () => void;
+  onCommit: (message: string, push: boolean) => void;
+  onPush: () => void;
+  onPr: (title: string, body: string) => void;
+  busyAction: string | null;
+  note: string | null;
+}) {
+  const [message, setMessage] = useState("");
+  const [prTitle, setPrTitle] = useState("");
+  const [prBody, setPrBody] = useState("");
+  const [showPr, setShowPr] = useState(false);
+  const busyAny = busyAction != null;
+  const changes = status?.total || 0;
+
+  return (
+    <div className="gitmenu">
+      <div className="githead">
+        <span className="gittitle">
+          {status == null
+            ? "Git"
+            : !status.repo
+              ? "Not a git repo"
+              : `${status.branch || "HEAD"}${changes > 0 ? ` · ${changes} change${changes === 1 ? "" : "s"}` : " · clean"}`}
+        </span>
+        <span className="spacer" />
+        <button className="mini" onClick={onRefresh} disabled={loading} title="Refresh git status">
+          {loading ? "…" : "Refresh"}
+        </button>
+      </div>
+      {status?.repo && (
+        <p className="gitsub" title={status.root || workspace}>
+          {(status.root || workspace || "").split("/").filter(Boolean).pop() || status.root || workspace}
+          {status.upstream ? ` → ${status.upstream}` : ""}
+          {(status.ahead || 0) > 0 ? ` · ↑${status.ahead}` : ""}
+          {(status.behind || 0) > 0 ? ` · ↓${status.behind}` : ""}
+        </p>
+      )}
+      {status != null && !status.repo && <p className="hint gitnote">This workspace folder is not a git repository.</p>}
+      {status?.repo && changes > 0 && (
+        <div className="gitfiles">
+          {(status.files || []).map((f) => (
+            <div key={f.path} className="gitfile" title={f.path}>
+              <span className={`gitcode${f.untracked ? " new" : f.staged ? " st" : ""}`}>{f.untracked ? "?" : f.code.trim() || "·"}</span>
+              <span className="gitpath">{f.path}</span>
+            </div>
+          ))}
+          {status.truncated && <p className="hint gitnote">Showing first {(status.files || []).length} of {changes} files.</p>}
+          <p className="hint gitnote">
+            {(status.staged || 0) > 0 ? `${status.staged} staged · ` : ""}
+            {(status.unstaged || 0) > 0 ? `${status.unstaged} modified · ` : ""}
+            {(status.untracked || 0) > 0 ? `${status.untracked} untracked` : ""}
+          </p>
+        </div>
+      )}
+      {status?.repo && changes === 0 && <p className="hint gitnote">Working tree clean.</p>}
+      {note && <p className={note.startsWith("✓") ? "gitok" : "err"}>{note}</p>}
+      {status?.repo && (
+        <>
+          <textarea
+            className="feedback gitmsg"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            placeholder="Commit message…"
+            rows={2}
+          />
+          <div className="row gitrow">
+            <button
+              className="primary gitbtn"
+              disabled={busyAny || !message.trim() || changes === 0}
+              onClick={() => {
+                onCommit(message.trim(), false);
+                setMessage("");
+              }}
+            >
+              {busyAction === "commit" ? "Committing…" : "Commit"}
+            </button>
+            <button
+              className="primary gitbtn"
+              disabled={busyAny || !message.trim() || changes === 0}
+              onClick={() => {
+                onCommit(message.trim(), true);
+                setMessage("");
+              }}
+              title="Stage everything, commit, and push (sets upstream on first push)"
+            >
+              {busyAction === "commit&push" ? "Pushing…" : "Commit & push"}
+            </button>
+          </div>
+          <div className="row gitrow">
+            <button className="choice" disabled={busyAny} onClick={onPush} title="Push the current branch">
+              {busyAction === "push" ? "Pushing…" : "Push"}
+            </button>
+            <button className="choice" onClick={() => setShowPr((v) => !v)} title="Create a pull request with gh">
+              PR…
+            </button>
+          </div>
+          {showPr && (
+            <div className="gitpr">
+              <input
+                className="feedback"
+                value={prTitle}
+                onChange={(e) => setPrTitle(e.target.value)}
+                placeholder="PR title (required)"
+              />
+              <textarea
+                className="feedback gitmsg"
+                value={prBody}
+                onChange={(e) => setPrBody(e.target.value)}
+                placeholder="PR description (optional)"
+                rows={2}
+              />
+              <p className="hint gitnote">Requires a clean tree and the `gh` CLI on the server.</p>
+              <div className="row gitrow">
+                <button
+                  className="primary gitbtn"
+                  disabled={busyAny || !prTitle.trim()}
+                  onClick={() => {
+                    onPr(prTitle.trim(), prBody);
+                    setPrTitle("");
+                    setPrBody("");
+                  }}
+                >
+                  {busyAction === "pr" ? "Creating…" : "Create PR"}
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function JsonOut({ value }: { value: unknown }) {
   if (value == null) return null;
   return <pre className="tbody out">{JSON.stringify(value, null, 2).slice(0, 8000)}</pre>;
+}
+
+function thinkingLabel(entry: Item): string {
+  switch (entry.kind) {
+    case "reasoning":
+      return "Thinking";
+    case "toolCall":
+      return entry.tool || "Tool";
+    case "userShell":
+      return "Shell";
+    case "subagent":
+      return "Subagent";
+    case "workflow":
+      return "Workflow";
+    case "reminderChild":
+      return "Reminder";
+    case "compaction":
+      return "Compacted";
+    default:
+      return entry.kind || "Activity";
+  }
+}
+
+function thinkingDetail(entry: Item): string {
+  if (entry.kind === "reasoning") {
+    const parts = (entry.summary || []).filter((s) => s && s.trim());
+    if (parts.length > 0) return parts.join("\n\n");
+    return entry.text || "";
+  }
+  if (entry.kind === "toolCall") {
+    const cmd = parseArgs(entry.args);
+    const out = (entry.visibleOutput || "").trim();
+    return [cmd, out].filter(Boolean).join(out && cmd ? "\n" : "");
+  }
+  if (entry.kind === "userShell") return entry.visibleOutput || entry.text || "";
+  if (entry.kind === "subagent") return entry.text || entry.fallbackText || "";
+  const text = (entry.text || "").trim();
+  return text || genericRowText(entry);
+}
+
+// One collapsible block per run of intermediate activity. Reasoning parts,
+// tool calls, and other non-message items append as rows of the same block
+// so thinking updates in place instead of posting one message per item.
+function ThinkingBlock({ entries, streamingId, open }: { entries: Item[]; streamingId: string | null; open: boolean }) {
+  const [expanded, setExpanded] = useState(open);
+  useEffect(() => {
+    if (open) setExpanded(true);
+  }, [open]);
+  const live = thinkingLive(entries, streamingId);
+  const key = entries.map((e) => e.itemId).join("|");
+  return (
+    <div className={`think${live ? " live" : ""}`} key={key}>
+      <button className="thinkhead" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}>
+        <span className={`thinkspin${live ? " on" : ""}`} aria-hidden />
+        <span className="thinktitle">{live ? "Thinking…" : "Thought"}</span>
+        <span className="thinkcount" aria-hidden>
+          {entries.length} step{entries.length === 1 ? "" : "s"}
+        </span>
+        <span className="thinkchev" aria-hidden>
+          {expanded ? "▾" : "▸"}
+        </span>
+      </button>
+      {expanded && (
+        <div className="thinkbody">
+          {entries.map((entry) => {
+            const active = streamingId === entry.itemId || entry.status === "inProgress";
+            return (
+              <div key={entry.itemId} className={`thinkrow${active ? " active" : ""}`}>
+                <span className="thinkdot" aria-hidden />
+                <div className="thinkmain">
+                  <div className="thinklabel">{thinkingLabel(entry)}</div>
+                  {thinkingDetail(entry) && <pre className="thinktext">{thinkingDetail(entry)}</pre>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function usePanel<T>(fn: () => Promise<T>) {
@@ -856,6 +1111,88 @@ function OpsPanel() {
   );
 }
 
+function SelfUpdate() {
+  const [repo, setRepo] = useStored("openmuse.repo", "");
+  const [st, setSt] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [polling, setPolling] = useState(false);
+  const [starting, setStarting] = useState(false);
+
+  useEffect(() => {
+    ops.devUpdateStatus().then(setSt).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!polling) return;
+    const t = setInterval(async () => {
+      try {
+        const s = await ops.devUpdateStatus();
+        setSt(s);
+        if (s.phase === "done" || s.phase === "failed") setPolling(false);
+      } catch {
+        // Connection lost mid-update: the old app likely just quit for the
+        // swap. Stop polling and say so instead of spinning forever.
+        setPolling(false);
+        setSt((prev: any) => ({ ...(prev || {}), phase: "restarting", ok: false }));
+      }
+    }, 2000);
+    return () => clearInterval(t);
+  }, [polling]);
+
+  async function start() {
+    if (
+      !window.confirm(
+        "Rebuild the desktop app from the local repo, replace /Applications/OpenMuse.app, and relaunch? The app will quit itself once the build finishes.",
+      )
+    ) {
+      return;
+    }
+    setErr(null);
+    setStarting(true);
+    try {
+      const r = await ops.devUpdate(repo || undefined);
+      setSt(r);
+      setPolling(true);
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  const phase = st?.phase || "idle";
+  const running = polling || starting || (phase !== "idle" && phase !== "done" && phase !== "failed" && phase !== "restarting" && st?.started !== false);
+  return (
+    <div>
+      <div className="row">
+        <input
+          className="feedback"
+          value={repo}
+          onChange={(e) => setRepo(e.target.value)}
+          placeholder="Repo checkout path (blank = auto-detect)"
+          title="openmuse.repo"
+          spellCheck={false}
+        />
+        <button className="primary" onClick={start} disabled={starting}>
+          {starting ? "Starting…" : "Update app"}
+        </button>
+      </div>
+      {err && <p className="err">{err}</p>}
+      {(st || polling) && (
+        <p className="hint">
+          Status: {phase}
+          {st?.repo ? ` · ${st.repo}` : ""}
+          {phase === "restarting" ? " — connection lost, the app is likely relaunching now." : ""}
+          {phase === "done" ? ` — ${st?.note || "finished"}` : ""}
+          {st?.error ? ` — ${st.error}` : ""}
+          {running && phase !== "restarting" ? " (build takes a few minutes; the app quits itself at the end)" : ""}
+        </p>
+      )}
+      {!!st?.logTail && <pre className="tbody out">{String(st.logTail).slice(-4000)}</pre>}
+    </div>
+  );
+}
+
 function SettingsPanel() {
   const fields: [string, string][] = [
     ["openmuse.provider", "provider (echo|meta)"],
@@ -894,6 +1231,14 @@ function SettingsPanel() {
         {fields.map(([key, label]) => (
           <SettingRow key={key} storageKey={key} label={label} />
         ))}
+      </div>
+      <div className="msg agent">
+        <div className="who">Self-update (rebuild this app from local changes)</div>
+        <p className="hint">
+          Rebuilds the desktop bundle from a repo checkout, swaps /Applications/OpenMuse.app, and relaunches. For
+          developing OpenMuse inside OpenMuse.
+        </p>
+        <SelfUpdate />
       </div>
     </div>
   );
@@ -973,7 +1318,9 @@ function SettingRow({ storageKey, label }: { storageKey: string; label: string }
   );
 }
 
-const RENDERABLE = new Set(["userMessage", "agentMessage", "toolCall"]);
+// Only user/agent messages render as bubbles; every other item kind folds
+// into a per-run thinking block (see threading.ts). Unknown kinds render
+// generically per the MSP spec, so any wire item with an id + kind is kept.
 
 type Tab = "chat" | "sessions" | "exec" | "skills" | "plugins" | "ops" | "settings" | "account";
 
@@ -999,6 +1346,8 @@ export default function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [items, setItems] = useState<Item[]>([]);
+  const itemsRef = useRef<Item[]>([]);
+  itemsRef.current = items;
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [prompts, setPrompts] = useState<InputPrompt[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -1018,6 +1367,11 @@ export default function App() {
   const [workspace, setWorkspace] = useState(() => localStorage.getItem("openmuse.workspace") || "");
   const [picking, setPicking] = useState(false);
   const [effort, setEffort] = useState(() => localStorage.getItem("openmuse.effort") || "");
+  const [git, setGit] = useState<GitStatus | null>(null);
+  const [gitLoading, setGitLoading] = useState(false);
+  const [gitOpen, setGitOpen] = useState(false);
+  const [gitAction, setGitAction] = useState<string | null>(null);
+  const [gitNote, setGitNote] = useState<string | null>(null);
 
   function chooseEffort(e: string) {
     setEffort(e);
@@ -1029,6 +1383,69 @@ export default function App() {
     localStorage.setItem("openmuse.workspace", p);
     setPicking(false);
   }
+
+  const gitChanges = git?.total || 0;
+
+  async function refreshGit() {
+    setGitLoading(true);
+    try {
+      setGit((await ops.gitStatus(workspace)) as GitStatus);
+    } catch (e: any) {
+      setGitNote(e.message);
+    } finally {
+      setGitLoading(false);
+    }
+  }
+
+  async function gitCommit(message: string, push: boolean) {
+    setGitAction(push ? "commit&push" : "commit");
+    setGitNote(null);
+    try {
+      const r = (await ops.gitCommit(workspace, message, push)) as { hash?: string; pushed?: boolean; status: GitStatus };
+      setGit(r.status);
+      setGitNote(`✓ committed ${r.hash || ""}${r.pushed ? " and pushed" : ""}`.trim());
+    } catch (e: any) {
+      setGitNote(e.message);
+    } finally {
+      setGitAction(null);
+    }
+  }
+
+  async function gitPush() {
+    setGitAction("push");
+    setGitNote(null);
+    try {
+      const r = (await ops.gitPush(workspace)) as { status: GitStatus };
+      setGit(r.status);
+      setGitNote("✓ pushed");
+    } catch (e: any) {
+      setGitNote(e.message);
+    } finally {
+      setGitAction(null);
+    }
+  }
+
+  async function gitCreatePr(title: string, body: string) {
+    setGitAction("pr");
+    setGitNote(null);
+    try {
+      const r = (await ops.gitPr(workspace, title, body)) as { url?: string };
+      setGitNote(`✓ PR created${r.url ? `: ${r.url}` : ""}`);
+    } catch (e: any) {
+      setGitNote(e.message);
+    } finally {
+      setGitAction(null);
+    }
+  }
+
+  // Poll git status every 10s; refresh immediately when the menu opens or
+  // the workspace changes.
+  useEffect(() => {
+    refreshGit();
+    const t = setInterval(refreshGit, 10000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace]);
 
   const [attachments, setAttachments] = useState<Attachment[]>([]);
 
@@ -1146,19 +1563,32 @@ export default function App() {
   }
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // Deltas that arrive before their item's open event (ephemeral opens have
+  // no durable record yet). Drained into the item when the open arrives.
+  const pendingDeltas = useRef<{ itemId: string; field: string; delta: string }[]>([]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [items, approvals, prompts]);
 
   const upsertItem = useCallback((wire: any) => {
-    if (!wire || !wire.itemId || !RENDERABLE.has(wire.kind)) return;
-    const it = wireToItem(wire);
+    if (!wire || !wire.itemId || typeof wire.kind !== "string") return;
+    let it = wireToItem(wire);
+    const buffered = pendingDeltas.current.filter((d) => d.itemId === it.itemId);
+    if (buffered.length > 0) {
+      pendingDeltas.current = pendingDeltas.current.filter((d) => d.itemId !== it.itemId);
+      for (const d of buffered) it = applyItemDelta(it, d.field, d.delta);
+    }
     setItems((xs) => {
       const i = xs.findIndex((x) => x.itemId === it.itemId);
       if (i >= 0) {
+        const prev = xs[i];
+        // item/updated + item/completed re-emit the full item at a higher
+        // revision; replace iff higher so out-of-order delivery can't
+        // clobber the final state with a stale revision.
+        if (it.revision != null && prev.revision != null && it.revision < prev.revision) return xs;
         const next = xs.slice();
-        next[i] = { ...it, text: it.text || next[i].text };
+        next[i] = { ...it, text: it.text || prev.text, visibleOutput: it.visibleOutput || prev.visibleOutput };
         return next;
       }
       // Host echo of our optimistic message: adopt it instead of doubling.
@@ -1207,11 +1637,33 @@ export default function App() {
           upsertItem(p.item);
           setBusy(true);
           break;
-        case "item/delta":
-          if (!p.itemId) break;
+        case "item/delta": {
+          if (!p.itemId || typeof p.delta !== "string") break;
+          const field = p.field || "text";
+          // Buffer-or-append decision must read current state without side
+          // effects (StrictMode double-invokes updaters). Check membership
+          // from the last rendered items via a ref-synced lookup instead.
+          const known = itemsRef.current.some((it) => it.itemId === p.itemId);
+          if (!known) {
+            // Delta before its open event (ephemeral opens have no durable
+            // record yet): buffer it; upsertItem drains it when the item
+            // arrives. Without this the delta would be dropped and the
+            // thinking block would miss streamed reasoning/tool output.
+            if (!pendingDeltas.current.some((d) => d.itemId === p.itemId && d.field === field && d.delta === p.delta)) {
+              pendingDeltas.current = [...pendingDeltas.current, { itemId: p.itemId, field, delta: p.delta }];
+            }
+          } else {
+            setItems((xs) => {
+              const i = xs.findIndex((it) => it.itemId === p.itemId);
+              if (i < 0) return xs;
+              const next = xs.slice();
+              next[i] = applyItemDelta(next[i], field, p.delta);
+              return next;
+            });
+          }
           setStreaming(p.itemId);
-          setItems((xs) => xs.map((it) => (it.itemId === p.itemId ? { ...it, text: it.text + (p.delta || "") } : it)));
           break;
+        }
         case "item/completed":
           upsertItem(p.item);
           setStreaming((s) => (p.item && s === p.item.itemId ? null : s));
@@ -1342,11 +1794,15 @@ export default function App() {
     setStreaming(null);
   }
 
+  function keepWire(w: any) {
+    return w && w.itemId && typeof w.kind === "string";
+  }
+
   function applyHistory(r: any, sid: string) {
     const hist = r.history || {};
     const arr = hist.items || [];
     if (arr.length > 0) {
-      const mapped = arr.filter((w: any) => w && RENDERABLE.has(w.kind)).map(wireToItem);
+      const mapped = arr.filter(keepWire).map(wireToItem);
       setItems(mapped);
       titleFromItems(mapped, sid);
     }
@@ -1357,7 +1813,7 @@ export default function App() {
       const r = await api(`/api/transcript?sessionId=${encodeURIComponent(sid)}`);
       const arr = r.items || [];
       if (arr.length > 0) {
-        const mapped = arr.filter((w: any) => w && RENDERABLE.has(w.kind)).map(wireToItem);
+        const mapped = arr.filter(keepWire).map(wireToItem);
         setItems(mapped);
         titleFromItems(mapped, sid);
       }
@@ -1542,6 +1998,11 @@ export default function App() {
   const liveApprovals = approvals.filter((a) => !a.settled);
   const livePrompts = prompts.filter((q) => !q.settled);
   const ctxPct = ctx ? Math.min(100, Math.round((ctx.used / ctx.window) * 100)) : 0;
+  // Collapse consecutive intermediate items into per-run thinking blocks;
+  // only user/agent messages render as bubbles. Memoized so block identity
+  // (and collapse state) survives unrelated re-renders.
+  const blocks = useMemo(() => groupThread(items), [items]);
+  const lastThinkIdx = blocks.reduce((acc, b, i) => (b.type === "thinking" ? i : acc), -1);
 
   return (
     <div className="shell">
@@ -1642,9 +2103,22 @@ export default function App() {
       <div className="work">
       <main className={`main tab-${tab}`}>
         <div className="topbar">
-          <span className="statuspill" data-ok={status.connected}>
-            {status.mock ? "demo host" : status.connected ? "muse connected" : "muse unreachable"}
-          </span>
+          <div className="topgroup">
+            <span className="statuspill" data-ok={status.connected}>
+              {status.mock ? "demo host" : status.connected ? "muse connected" : "muse unreachable"}
+            </span>
+            <button
+              className={`mini gitbtn${git && git.repo && gitChanges > 0 ? " dirty" : ""}`}
+              onClick={() => {
+                setGitOpen((v) => !v);
+                if (!gitOpen) refreshGit();
+              }}
+              title={git && git.repo ? `${gitChanges} uncommitted change${gitChanges === 1 ? "" : "s"} on ${git.branch || "?"}` : "Git actions: commit, push, PR"}
+            >
+              <span className="gitdot" aria-hidden />
+              {git?.repo ? `${git.branch || "?"}${gitChanges > 0 ? ` · ${gitChanges}` : ""}` : "Git"}
+            </button>
+          </div>
           <button
             className="mini bbrowser"
             onClick={() => setBrowserOpen((v) => !v)}
@@ -1653,6 +2127,24 @@ export default function App() {
             {browserOpen ? "Hide browser" : "Browser"}
           </button>
         </div>
+        {gitOpen && (
+          <>
+            <div className="menuveil" onClick={() => setGitOpen(false)} />
+            <div className="gitpop">
+              <GitMenu
+                status={git}
+                loading={gitLoading}
+                workspace={workspace}
+                onRefresh={refreshGit}
+                onCommit={gitCommit}
+                onPush={gitPush}
+                onPr={gitCreatePr}
+                busyAction={gitAction}
+                note={gitNote}
+              />
+            </div>
+          </>
+        )}
         {tab === "sessions" ? (
           <SessionsPanel sessionId={sessionId} />
         ) : tab === "exec" ? (
@@ -1710,6 +2202,12 @@ export default function App() {
                 attachments={attachments}
                 onAddFiles={addFiles}
                 onRemoveAttachment={removeAttachment}
+                gitBadge={git?.repo ? `${git.branch || "?"}${gitChanges > 0 ? ` · ${gitChanges}` : " · clean"}` : null}
+                gitDirty={git?.repo === true && gitChanges > 0}
+                onGitClick={() => {
+                  setGitOpen(true);
+                  refreshGit();
+                }}
               />
             </div>
             {picking && <WorkspacePicker initial={workspace} onPick={chooseWorkspace} onClose={() => setPicking(false)} />}
@@ -1764,26 +2262,20 @@ export default function App() {
               </div>
             )}
             <div className="thread" aria-live="polite">
-              {items.map((it) =>
-                it.kind === "toolCall" ? (
-                  <div
-                    key={it.itemId}
-                    className={`tool${streaming === it.itemId ? " streaming" : ""}${it.done ? " done" : ""}`}
-                  >
-                    <span className="tic" aria-hidden>
-                      {it.done ? "✓" : ""}
-                    </span>
-                    <div className="tbody">
-                      <div>
-                        {it.tool || "tool"} · {parseArgs(it.args)}
-                      </div>
-                      {it.visibleOutput && <pre className="tbody out">{it.visibleOutput}</pre>}
-                    </div>
-                  </div>
+              {blocks.map((b, i) =>
+                b.type === "thinking" ? (
+                  <ThinkingBlock key={b.key} entries={b.entries} streamingId={streaming} open={i === lastThinkIdx} />
                 ) : (
-                  <div key={it.itemId} className={`msg ${it.kind === "userMessage" ? "user" : "agent"}${streaming === it.itemId ? " streaming" : ""}`}>
-                    <div className="who">{it.kind === "userMessage" ? "You" : "Muse"}</div>
-                    {it.kind === "userMessage" ? <pre className="body">{it.text}</pre> : <Markdown text={it.text || (it.done ? "" : "…")} />}
+                  <div
+                    key={b.item.itemId}
+                    className={`msg ${b.type === "user" ? "user" : "agent"}${streaming === b.item.itemId ? " streaming" : ""}`}
+                  >
+                    <div className="who">{b.type === "user" ? "You" : "Muse"}</div>
+                    {b.type === "user" ? (
+                      <pre className="body">{b.item.text}</pre>
+                    ) : (
+                      <Markdown text={b.item.text || (b.item.done ? "" : "…")} />
+                    )}
                   </div>
                 ),
               )}
@@ -1823,6 +2315,12 @@ export default function App() {
                 attachments={attachments}
                 onAddFiles={addFiles}
                 onRemoveAttachment={removeAttachment}
+                gitBadge={git?.repo ? `${git.branch || "?"}${gitChanges > 0 ? ` · ${gitChanges}` : " · clean"}` : null}
+                gitDirty={git?.repo === true && gitChanges > 0}
+                onGitClick={() => {
+                  setGitOpen(true);
+                  refreshGit();
+                }}
               />
             </div>
             {picking && <WorkspacePicker initial={workspace} onPick={chooseWorkspace} onClose={() => setPicking(false)} />}

@@ -80,6 +80,15 @@ export const ops = {
   authLogout: () => api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) }),
   authSet: (apiKey: string, provider?: string) =>
     api("/api/auth/set", { method: "POST", body: JSON.stringify({ apiKey, provider }) }),
+  devUpdate: (repo?: string, dryRun = false) =>
+    api("/api/dev/update", { method: "POST", body: JSON.stringify({ repo, dryRun }) }),
+  devUpdateStatus: () => api("/api/dev/update-status"),
+  gitStatus: (workspace: string) => api(`/api/git/status?workspace=${encodeURIComponent(workspace || "")}`),
+  gitCommit: (workspace: string, message: string, push = false) =>
+    api("/api/git/commit", { method: "POST", body: JSON.stringify({ workspace, message, push }) }),
+  gitPush: (workspace: string) => api("/api/git/push", { method: "POST", body: JSON.stringify({ workspace }) }),
+  gitPr: (workspace: string, title: string, body = "", base = "", draft = false) =>
+    api("/api/git/pr", { method: "POST", body: JSON.stringify({ workspace, title, body, base, draft }) }),
 };
 
 export function subscribe(onEvent: (method: string, params: any) => void, onStatus?: (s: any) => void) {

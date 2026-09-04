@@ -189,10 +189,46 @@ class MockHost extends EventEmitter {
     const hist = (this.histories[sessionId] = this.histories[sessionId] || []);
     hist.push({ itemId: `u-${Date.now()}`, kind: "userMessage", turnId, revision: 1, status: "completed", text });
     this.emit("notification", { method: "turn/started", params: { sessionId, turnId } });
+    // Reasoning streams summary parts via field "summary.N" before the reply
+    // opens, mirroring the real host. The UI folds these into one thinking
+    // block that updates in place.
+    const thinkId = `think-${Date.now()}`;
+    const thinkSummary = ["Considering the request and which tools to use.", "Drafting the reply."];
+    this.emit("notification", {
+      method: "item/started",
+      params: { sessionId, viewCursor: "0", item: { itemId: thinkId, kind: "reasoning", turnId, revision: 1, status: "inProgress", summary: [""] } },
+    });
+    this.emit("notification", {
+      method: "item/delta",
+      params: { sessionId, itemId: thinkId, field: "summary.0", delta: thinkSummary[0], viewCursor: "0a" },
+    });
+    this.emit("notification", {
+      method: "item/delta",
+      params: { sessionId, itemId: thinkId, field: "summary.1", delta: thinkSummary[1], viewCursor: "0b" },
+    });
+    const toolId = `tool-${Date.now()}`;
+    this.emit("notification", {
+      method: "item/started",
+      params: { sessionId, viewCursor: "0c", item: { itemId: toolId, kind: "toolCall", turnId, revision: 1, status: "inProgress", tool: "bash", args: JSON.stringify({ command: "echo mock-thinking-ok", description: "Demo tool step" }) } },
+    });
+    this.emit("notification", {
+      method: "item/delta",
+      params: { sessionId, itemId: toolId, field: "output", delta: "mock-thinking-ok\n", viewCursor: "0d" },
+    });
+    hist.push({ itemId: thinkId, kind: "reasoning", turnId, revision: 2, status: "completed", summary: thinkSummary });
+    hist.push({ itemId: toolId, kind: "toolCall", turnId, revision: 2, status: "completed", tool: "bash", args: JSON.stringify({ command: "echo mock-thinking-ok" }), visibleOutput: "mock-thinking-ok\n" });
+    this.emit("notification", {
+      method: "item/completed",
+      params: { sessionId, viewCursor: "0e", item: { itemId: thinkId, kind: "reasoning", turnId, revision: 2, status: "completed", summary: thinkSummary } },
+    });
+    this.emit("notification", {
+      method: "item/completed",
+      params: { sessionId, viewCursor: "0f", item: { itemId: toolId, kind: "toolCall", turnId, revision: 2, status: "completed", tool: "bash", args: JSON.stringify({ command: "echo mock-thinking-ok" }), visibleOutput: "mock-thinking-ok\n" } },
+    });
     // Mirror the real wire shape: items nest under params.item.
     this.emit("notification", {
       method: "item/started",
-      params: { sessionId, viewCursor: "0", item: { itemId, kind: "agentMessage", turnId, revision: 1, status: "inProgress", text: "" } },
+      params: { sessionId, viewCursor: "0g", item: { itemId, kind: "agentMessage", turnId, revision: 1, status: "inProgress", text: "" } },
     });
     // Mid-turn the "model" asks a question; the turn only finishes once answered.
     const userInputId = `ui-${Date.now()}`;
