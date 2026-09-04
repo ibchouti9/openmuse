@@ -24,6 +24,12 @@
   --focus: #8ccbff;
   --overlay: rgba(4, 7, 12, 0.62);
   --radius: 14px;
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 380ms;
+  --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
+  --skel: rgba(255, 255, 255, 0.06);
+  --skel-shine: rgba(255, 255, 255, 0.12);
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --serif: Georgia, "Times New Roman", Times, serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
@@ -373,6 +379,40 @@ select.pill option {
   font-size: 13px;
   font-family: var(--mono);
   white-space: pre-wrap;
+  background: var(--bad-soft);
+  border: 1px solid rgba(240, 102, 90, 0.4);
+  border-left: 3px solid var(--bad);
+  border-radius: 10px;
+  padding: 9px 12px;
+  margin: 8px 0;
+}
+
+/* Visually hidden but announced by screen readers (loading/error helpers). */
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Skeleton shimmer for loading placeholders (respects reduced-motion). */
+.skel {
+  border-radius: 8px;
+  background: linear-gradient(100deg, var(--skel) 30%, var(--skel-shine) 50%, var(--skel) 70%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+  min-height: 14px;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
 }
 
 /* ---------- thread ---------- */
@@ -401,17 +441,6 @@ select.pill option {
   margin: 0 auto;
 }
 
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
 .msg.agent,
 .approval,
 .question {
@@ -425,6 +454,17 @@ select.pill option {
 
 .msg .who {
   display: none;
+}
+
+/* Long-transcript perf: skip layout/paint for offscreen messages while
+   keeping each item's natural height via automatic intrinsic sizing. */
+.msg.agent,
+.msg.user,
+.think,
+.approval,
+.question {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
 }
 
 .msg.user {
@@ -1212,10 +1252,15 @@ button.send:disabled {
 }
 
 .thread {
-  scroll-behavior: smooth;
+  /* Instant by default: App drives smooth vs instant per scroll
+     (instant while streaming deltas pour in, smooth when settled).
+     A blanket `smooth` here would force every streaming scrollIntoView
+     smooth and queue per-character smooth scrolls = stutter. */
+  scroll-behavior: auto;
+  overflow-anchor: auto;
 }
 
-.thread > * {
+.thread > *:not(.streaming) {
   animation: rise 0.32s ease both;
 }
 
@@ -2099,12 +2144,55 @@ button.chipx:hover {
   left: 0;
   right: 0;
   height: 2px;
+  overflow: hidden;
+  background: rgba(74, 168, 255, 0.15);
+}
+
+.bloading::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -40%;
+  width: 40%;
   background: var(--accent-grad);
-  animation: pulse 1.2s ease-in-out infinite;
+  animation: bload 1.2s var(--ease-out) infinite;
+}
+
+@keyframes bload {
+  to {
+    left: 100%;
+  }
 }
 
 .berr {
   margin: 0;
+}
+
+.berrrow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.bempty {
+  gap: 6px;
+  flex-direction: column;
+}
+
+.bempty-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.bempty-sub {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13.5px;
+  max-width: 260px;
 }
 
 .btools {

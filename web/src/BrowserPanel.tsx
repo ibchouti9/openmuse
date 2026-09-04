@@ -81,6 +81,9 @@ export default function BrowserPanel({
     setShot(null);
     setInput(url);
     setSrc(url);
+    // Remount the guest even for a same-URL Go/Retry so navigation events
+    // fire and `loading` always resolves instead of sticking on.
+    setFrameKey((k) => k + 1);
     try {
       localStorage.setItem("openmuse.browserUrl", url);
     } catch {
@@ -143,6 +146,15 @@ export default function BrowserPanel({
       wv.removeEventListener("did-fail-load", onFail);
     };
   }, [src]);
+
+  // Watchdog: never spin forever. Frame-blocking sites (X-Frame-Options)
+  // and stalled dev servers may never resolve `loading`; after 30s stop
+  // the spinner so the pane degrades to its error/empty state instead.
+  useEffect(() => {
+    if (!loading) return;
+    const t = setTimeout(() => setLoading(false), 30000);
+    return () => clearTimeout(t);
+  }, [loading, src, frameKey]);
 
   function guestId(): number | null {
     const id = webRef.current?.getWebContentsId?.();
@@ -231,7 +243,8 @@ export default function BrowserPanel({
         <button
           type="button"
           className="iconbtn bnavbtn"
-          title="Back"
+          title={IS_DESKTOP ? "Back" : "Back (needs desktop app)"}
+          aria-label="Back"
           disabled={!IS_DESKTOP || !nav.back}
           onClick={() => webRef.current?.goBack?.()}
         >
@@ -240,7 +253,8 @@ export default function BrowserPanel({
         <button
           type="button"
           className="iconbtn bnavbtn"
-          title="Forward"
+          title={IS_DESKTOP ? "Forward" : "Forward (needs desktop app)"}
+          aria-label="Forward"
           disabled={!IS_DESKTOP || !nav.fwd}
           onClick={() => webRef.current?.goForward?.()}
         >
@@ -250,6 +264,7 @@ export default function BrowserPanel({
           type="button"
           className="iconbtn bnavbtn"
           title="Reload"
+          aria-label="Reload"
           disabled={!src}
           onClick={() => {
             if (webRef.current?.reload) webRef.current.reload();
@@ -285,11 +300,11 @@ export default function BrowserPanel({
           need the OpenMuse desktop app.
         </p>
       )}
-      <div className="bview">
+      <div className="bview" aria-busy={loading} aria-live="off">
         {src ? (
           IS_DESKTOP ? (
             <WebviewTag
-              key={src}
+              key={`${src}-${frameKey}`}
               ref={webRef}
               className="bwebview"
               src={src}
@@ -307,24 +322,43 @@ export default function BrowserPanel({
             />
           )
         ) : (
-          <div className="bempty">
-            <p>Type any URL above — your dev server, localhost, or a live site.</p>
+          <div className="bempty" role="status">
+            <p className="bempty-title">Preview your work</p>
+            <p className="bempty-sub">Type any URL above — your dev server, localhost, or a live site — or pick a preset.</p>
           </div>
         )}
-        {loading && <div className="bloading" aria-hidden />}
+        {loading && (
+          <div className="bloading" aria-hidden>
+            <span className="sr">Loading page…</span>
+          </div>
+        )}
       </div>
-      {err && <p className="err berr">{err}</p>}
+      {err && (
+        <div className="err berr" role="alert">
+          <span>{err}</span>
+          <div className="row berrrow">
+            {src && (
+              <button className="mini" onClick={() => go(src)}>
+                Retry
+              </button>
+            )}
+            <button className="mini" onClick={() => setErr(null)}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
       <div className="btools">
         <button className="mini" disabled={!src} onClick={() => go(src)} title="Reload the page">
           Reload
         </button>
-        <button className="mini" disabled={!src || !IS_DESKTOP} onClick={() => setZoomLevel(zoom - 0.1)} title="Zoom out">
+        <button className="mini" disabled={!src || !IS_DESKTOP} onClick={() => setZoomLevel(zoom - 0.1)} title={IS_DESKTOP ? "Zoom out" : "Zoom needs the desktop app"}>
           A−
         </button>
         <span className="bzoom" title="Page zoom">
           {Math.round(zoom * 100)}%
         </span>
-        <button className="mini" disabled={!src || !IS_DESKTOP} onClick={() => setZoomLevel(zoom + 0.1)} title="Zoom in">
+        <button className="mini" disabled={!src || !IS_DESKTOP} onClick={() => setZoomLevel(zoom + 0.1)} title={IS_DESKTOP ? "Zoom in" : "Zoom needs the desktop app"}>
           A+
         </button>
         <button className="mini" disabled={!src || !IS_DESKTOP} onClick={() => toggleDevTools()} title="Inspect the page">

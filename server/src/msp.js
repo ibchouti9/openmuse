@@ -22,6 +22,21 @@ function uuidv7() {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
+const DEFAULT_TIMEOUT_MS = 120000;
+// Fast-fail reads: a hung list/page should surface in seconds, not hang
+// the UI behind the 120s write default.
+const READ_TIMEOUT_MS = 30000;
+const METHOD_TIMEOUTS = {
+  "session/list": READ_TIMEOUT_MS,
+  "view/page": READ_TIMEOUT_MS,
+  "model/list": READ_TIMEOUT_MS,
+  "approval/listPending": READ_TIMEOUT_MS,
+  "session/read": READ_TIMEOUT_MS,
+};
+// Cap the stdio line buffer so one oversized frame can't grow memory
+// without bound; the buffer resets and the frame is reported as a log.
+const MAX_BUF_BYTES = 64 * 1024 * 1024;
+
 class MspHost extends EventEmitter {
   constructor(opts = {}) {
     super();
@@ -102,6 +117,11 @@ class MspHost extends EventEmitter {
 
   _onData(chunk) {
     this.buf += chunk.toString("utf8");
+    if (Buffer.byteLength(this.buf, "utf8") > MAX_BUF_BYTES) {
+      this.buf = "";
+      this.emit("host-log", "msp: dropped oversized stdio buffer (>64MB) to protect memory");
+      return;
+    }
     let i;
     while ((i = this.buf.indexOf("\n")) >= 0) {
       const line = this.buf.slice(0, i).trim();
@@ -142,16 +162,17 @@ class MspHost extends EventEmitter {
     if (this.proc && this.proc.stdin.writable) this.proc.stdin.write(JSON.stringify(obj) + "\n");
   }
 
-  request(method, params, timeoutMs = 120000) {
+  request(method, params, timeoutMs) {
     if (!this.proc || this.proc.exitCode !== null) {
       return Promise.reject(new Error("muse host is not running"));
     }
+    const budget = timeoutMs ?? METHOD_TIMEOUTS[method] ?? DEFAULT_TIMEOUT_MS;
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`msp request timed out: ${method}`));
-      }, timeoutMs);
+      }, budget);
       this.pending.set(id, {
         resolve: (v) => {
           clearTimeout(timer);
@@ -242,10 +263,10 @@ class MspHost extends EventEmitter {
   userInputCancel({ sessionId, userInputId }) {
     return this.request("userInput/cancel", { commandId: uuidv7(), sessionId, userInputId });
   }
-  viewPage({ sessionId, cursor = null, limit = 200 } = {}) {
+  viewPage({ sessionId, cursor = null, limit = 200, timeoutMs } = {}) {
     const params = { sessionId, limit };
     if (cursor) params.cursor = cursor;
-    return this.request("view/page", params);
+    return this.request("view/page", params, timeoutMs);
   }
   setModel(sessionId, modelId) {
     return this.request("session/setModel", { commandId: uuidv7(), sessionId, model: { modelId } });
