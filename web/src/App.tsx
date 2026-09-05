@@ -6,6 +6,7 @@ import BrowserPanel from "./BrowserPanel";
 import { applyItemDelta, groupThread, ThreadItem } from "./threading";
 
 import {
+  CloseIcon,
   CodeIcon,
   DownloadIcon,
   ExternalLinkIcon,
@@ -14,12 +15,14 @@ import {
   GlobeIcon,
   MessageSquareIcon,
   Minimize2Icon,
+  MoreHorizontalIcon,
   PlusIcon,
   RefreshCwIcon,
   SearchIcon,
   SettingsIcon,
   SidebarIcon,
   SparklesIcon,
+  StopIcon,
   UserIcon,
 } from "./components/Icons";
 import Composer, { Attachment } from "./components/Composer";
@@ -165,6 +168,9 @@ export default function App() {
   const [browserOpen, setBrowserOpen] = useState(false);
   const [chatFilter, setChatFilter] = useState("");
   const [transcriptFilter, setTranscriptFilter] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const daypart = (() => {
     const h = new Date().getHours();
@@ -878,12 +884,19 @@ export default function App() {
       const t = e.target as HTMLElement | null;
       const inField = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT");
       if (e.key === "Escape") {
-        if (document.activeElement && document.activeElement.id === "transcript-search") {
+        if (document.activeElement && (document.activeElement.id === "topbar-search-input" || document.activeElement.id === "transcript-search")) {
           setTranscriptFilter("");
+          setSearchOpen(false);
           (document.activeElement as HTMLElement).blur();
         }
         setGitOpen(false);
         setMenuOpen(false);
+        setSessionMenuOpen(false);
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        setSidebarCollapsed((v) => !v);
         return;
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -900,7 +913,8 @@ export default function App() {
       if (inField || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === "/" && sessionId) {
         e.preventDefault();
-        document.getElementById("transcript-search")?.focus();
+        setSearchOpen(true);
+        setTimeout(() => document.getElementById("topbar-search-input")?.focus(), 50);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -919,7 +933,7 @@ export default function App() {
   return (
     <div className="app-shell">
       {/* ----------------- Left Sidebar ----------------- */}
-      <aside className="app-sidebar">
+      <aside className={`app-sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
         <div className="sidebar-header-drag">
           <div className="app-brand">
             <div className="brand-prism-wrap" aria-hidden>
@@ -1079,32 +1093,97 @@ export default function App() {
           {/* Top Bar Header */}
           <header className="topbar-container">
             <div className="topbar-left">
-              <span className={`connection-status-pill ${status.connected ? "connected" : ""}`}>
-                <span className="status-dot" aria-hidden />
-                <span>{status.mock ? "demo host" : status.connected ? "muse connected" : "muse unreachable"}</span>
-              </span>
+              {/* Sidebar Collapse Toggle */}
+              <button
+                type="button"
+                className={`topbar-icon-btn sidebar-toggle-btn ${sidebarCollapsed ? "is-collapsed" : ""}`}
+                onClick={() => setSidebarCollapsed((v) => !v)}
+                title={sidebarCollapsed ? "Expand sidebar (⌘B)" : "Collapse sidebar (⌘B)"}
+                aria-label="Toggle sidebar"
+              >
+                <SidebarIcon size={15} />
+              </button>
 
+              {/* Status Indicator */}
+              <div
+                className={`topbar-status-badge ${status.connected ? "is-connected" : "is-offline"}`}
+                title={status.mock ? "Demo host mode" : status.connected ? "Muse Engine Online (muse-spark-1.3)" : "Muse Engine Offline"}
+              >
+                <span className="status-live-dot" />
+                <span className="status-live-label">{status.mock ? "Demo" : status.connected ? "Online" : "Offline"}</span>
+              </div>
+
+              {/* Breadcrumb & Session Title */}
               {tab === "chat" && activeSessionObj && (
-                <div className="topbar-title-meta">
-                  <span>{titleFor(activeSessionObj)}</span>
+                <div className="topbar-title-breadcrumb">
+                  <span className="breadcrumb-divider">/</span>
+                  <span className="topbar-session-title" title={titleFor(activeSessionObj)}>
+                    {titleFor(activeSessionObj)}
+                  </span>
                 </div>
               )}
             </div>
 
             <div className="topbar-right">
-              {/* Git Status Widget */}
+              {/* Expandable Search Input */}
+              <div className={`topbar-search-cluster ${searchOpen || transcriptFilter ? "is-open" : ""}`}>
+                <button
+                  type="button"
+                  className={`topbar-icon-btn ${searchOpen || transcriptFilter ? "active" : ""}`}
+                  onClick={() => {
+                    setSearchOpen((v) => !v);
+                    if (!searchOpen) {
+                      setTimeout(() => document.getElementById("topbar-search-input")?.focus(), 60);
+                    }
+                  }}
+                  title="Filter messages in this session ( / )"
+                >
+                  <SearchIcon size={14} />
+                </button>
+                {(searchOpen || transcriptFilter) && (
+                  <div className="topbar-search-field-wrap">
+                    <input
+                      id="topbar-search-input"
+                      className="topbar-search-field"
+                      value={transcriptFilter}
+                      onChange={(e) => setTranscriptFilter(e.target.value)}
+                      placeholder="Filter session..."
+                      autoFocus
+                    />
+                    {transcriptFilter && (
+                      <span className="topbar-search-matches font-mono">
+                        {visibleBlocks.length}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      className="topbar-search-close-btn"
+                      onClick={() => {
+                        setTranscriptFilter("");
+                        setSearchOpen(false);
+                      }}
+                      title="Clear & close search"
+                    >
+                      <CloseIcon size={12} />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Git Status Pill */}
               <div className="popover-anchor">
                 <button
                   type="button"
-                  className={`topbar-btn ${gitOpen ? "active" : ""} ${git && git.repo && gitChanges > 0 ? "git-dirty" : ""}`}
+                  className={`topbar-pill-btn ${gitOpen ? "active" : ""} ${git && git.repo && gitChanges > 0 ? "is-dirty" : ""}`}
                   onClick={() => {
                     setGitOpen((v) => !v);
                     if (!gitOpen) refreshGit();
                   }}
-                  title={git?.repo ? `${gitChanges} uncommitted changes on ${git.branch || "?"}` : "Git operations"}
+                  title={git?.repo ? `${gitChanges} uncommitted changes on ${git.branch || "HEAD"}` : "Git operations"}
                 >
-                  <GitBranchIcon size={14} />
-                  <span>{git?.repo ? `${git.branch || "HEAD"}${gitChanges > 0 ? ` (${gitChanges})` : ""}` : "Git"}</span>
+                  <GitBranchIcon size={13} />
+                  <span className="font-mono">{git?.repo ? git.branch || "HEAD" : "Git"}</span>
+                  {gitChanges > 0 && <span className="git-changes-badge font-mono">{gitChanges}</span>}
                 </button>
 
                 {gitOpen && (
@@ -1125,88 +1204,114 @@ export default function App() {
                 )}
               </div>
 
-              {/* Chat Session Operations */}
+              {/* Token Usage Pill */}
+              {ctx && (
+                <div
+                  className="topbar-token-pill font-mono"
+                  title={`Context tokens: ${ctx.used.toLocaleString()} / ${ctx.window.toLocaleString()} (${Math.round(ctxPct)}%)`}
+                >
+                  <span
+                    className="token-pulse-dot"
+                    style={{
+                      background: ctxPct > 80 ? "var(--bad)" : ctxPct > 50 ? "var(--amber)" : "var(--good)",
+                    }}
+                  />
+                  <span>{Math.round(ctx.used / 1000)}k</span>
+                </div>
+              )}
+
+              {/* Session More Actions Dropdown Menu */}
               {tab === "chat" && sessionId && (
-                <>
+                <div className="popover-anchor">
                   <button
                     type="button"
-                    className="topbar-btn"
-                    onClick={retryLast}
-                    disabled={busy || !sessionId}
-                    title="Retry last user prompt"
+                    className={`topbar-icon-btn ${sessionMenuOpen ? "active" : ""}`}
+                    onClick={() => setSessionMenuOpen((v) => !v)}
+                    title="Session actions (Fork, Compact, Export, Retry)"
                   >
-                    <RefreshCwIcon size={12} />
-                    <span>Retry</span>
+                    <MoreHorizontalIcon size={16} />
                   </button>
 
-                  <button
-                    type="button"
-                    className="topbar-btn"
-                    onClick={async () => {
-                      if (!sessionId) return;
-                      setError(null);
-                      try {
-                        const r = await ops.fork(sessionId);
-                        const f = r.session;
-                        if (f) setSessions((xs) => upsertSessionList(xs, f));
-                      } catch (e: any) {
-                        setError(e.message);
-                      }
-                    }}
-                    title="Fork conversation to explore an alternative branch"
-                  >
-                    <GitForkIcon size={13} />
-                    <span>Fork</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="topbar-btn"
-                    onClick={async () => {
-                      if (!sessionId) return;
-                      setError(null);
-                      try {
-                        await ops.compact(sessionId);
-                      } catch (e: any) {
-                        setError(e.message);
-                      }
-                    }}
-                    title="Compact conversation history to conserve token context"
-                  >
-                    <Minimize2Icon size={13} />
-                    <span>Compact</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="topbar-btn"
-                    onClick={exportChat}
-                    title="Export session data as JSON"
-                  >
-                    <DownloadIcon size={13} />
-                    <span>Export</span>
-                  </button>
-                </>
+                  {sessionMenuOpen && (
+                    <>
+                      <div className="modal-backdrop-transparent" onClick={() => setSessionMenuOpen(false)} />
+                      <div className="session-actions-menu-dropdown">
+                        <div className="menu-header-label">Session Actions</div>
+                        <button
+                          type="button"
+                          className="session-menu-row"
+                          onClick={() => {
+                            setSessionMenuOpen(false);
+                            retryLast();
+                          }}
+                          disabled={busy}
+                        >
+                          <RefreshCwIcon size={14} />
+                          <span>Retry Last Prompt</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="session-menu-row"
+                          onClick={async () => {
+                            setSessionMenuOpen(false);
+                            if (!sessionId) return;
+                            setError(null);
+                            try {
+                              const r = await ops.fork(sessionId);
+                              const f = r.session;
+                              if (f) setSessions((xs) => upsertSessionList(xs, f));
+                            } catch (e: any) {
+                              setError(e.message);
+                            }
+                          }}
+                        >
+                          <GitForkIcon size={14} />
+                          <span>Fork Conversation</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="session-menu-row"
+                          onClick={async () => {
+                            setSessionMenuOpen(false);
+                            if (!sessionId) return;
+                            setError(null);
+                            try {
+                              await ops.compact(sessionId);
+                            } catch (e: any) {
+                              setError(e.message);
+                            }
+                          }}
+                        >
+                          <Minimize2Icon size={14} />
+                          <span>Compact Context</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="session-menu-row"
+                          onClick={() => {
+                            setSessionMenuOpen(false);
+                            exportChat();
+                          }}
+                        >
+                          <DownloadIcon size={14} />
+                          <span>Export Session JSON</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               )}
 
               {/* In-app Browser Inspector Toggle */}
               <button
                 type="button"
-                className={`topbar-btn ${browserOpen ? "active" : ""}`}
+                className={`topbar-icon-btn ${browserOpen ? "active" : ""}`}
                 onClick={() => setBrowserOpen((v) => !v)}
-                title="Toggle Web Preview Pane"
+                title={browserOpen ? "Hide Web Preview Pane" : "Open Web Preview Pane"}
               >
-                <GlobeIcon size={14} />
-                <span>{browserOpen ? "Hide Browser" : "Browser"}</span>
+                <GlobeIcon size={15} />
               </button>
             </div>
-
-            {/* Context Token Usage Strip */}
-            {ctx && (
-              <div className="context-meter-strip" title={`${ctx.used} / ${ctx.window} tokens used`}>
-                <div className="context-meter-fill" style={{ width: `${ctxPct}%` }} />
-              </div>
-            )}
           </header>
 
           {/* ----------------- Active View Content ----------------- */}
@@ -1308,31 +1413,21 @@ export default function App() {
                   stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
                 }}
               >
-                {/* Transcript Filter Search Bar */}
-                <div className="transcript-filter-bar">
-                  <SearchIcon size={13} className="sidebar-search-icon" />
-                  <input
-                    id="transcript-search"
-                    className="transcript-filter-input"
-                    value={transcriptFilter}
-                    onChange={(e) => setTranscriptFilter(e.target.value)}
-                    placeholder="Filter messages and tool calls in this session... ( / to focus )"
-                  />
-                  {needle && (
-                    <>
-                      <span className="filter-match-count">
-                        {visibleBlocks.length} of {blocks.length} shown
-                      </span>
-                      <button
-                        type="button"
-                        className="filter-clear-btn"
-                        onClick={() => setTranscriptFilter("")}
-                      >
-                        Clear
-                      </button>
-                    </>
-                  )}
-                </div>
+                {/* Active Filter Strip (only shown when filtering) */}
+                {needle && (
+                  <div className="active-filter-indicator-bar">
+                    <span className="filter-hint">
+                      Filtered by <strong>"{transcriptFilter}"</strong> ({visibleBlocks.length} of {blocks.length} shown)
+                    </span>
+                    <button
+                      type="button"
+                      className="filter-clear-pill-btn"
+                      onClick={() => setTranscriptFilter("")}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
 
                 {visibleBlocks.map((b) =>
                   b.type === "thinking" ? (
@@ -1349,6 +1444,9 @@ export default function App() {
                           </div>
                         )}
                         <span className="message-author-label">{b.type === "user" ? "You" : "Muse"}</span>
+                        {b.type === "agent" && (
+                          <span className="message-model-tag font-mono">muse-spark-1.3</span>
+                        )}
                         <div className="spacer" />
                         <MessageActions
                           text={b.item.text || ""}
@@ -1374,8 +1472,11 @@ export default function App() {
                           {b.item.text}
                         </div>
                       ) : (
-                        <div className="agent-response-box">
+                        <div className={`agent-response-box ${streaming === b.item.itemId || (!b.item.done && busy) ? "streaming" : ""}`}>
                           <Markdown text={b.item.text || (b.item.done ? "" : "...")} />
+                          {(streaming === b.item.itemId || (!b.item.done && busy)) && (
+                            <span className="streaming-pulse-cursor" aria-hidden="true" />
+                          )}
                         </div>
                       )}
                     </div>
@@ -1397,12 +1498,36 @@ export default function App() {
                   />
                 ))}
 
-                {/* Thinking Dots Indicator */}
+                {/* Active Neural Synthesis Card */}
                 {busy && !streaming && liveApprovals.length === 0 && livePrompts.length === 0 && (
-                  <div className="agent-thinking-dots" aria-label="Muse is thinking">
-                    <span />
-                    <span />
-                    <span />
+                  <div className="neural-synthesis-live-card" aria-label="Muse is processing">
+                    <div className="neural-synthesis-glow" />
+                    <div className="neural-synthesis-left">
+                      <div className="neural-synthesis-avatar" aria-hidden>
+                        <MusePrism3D size={22} interactive={false} />
+                      </div>
+                      <div className="neural-synthesis-content">
+                        <div className="neural-synthesis-title-row">
+                          <span className="neural-synthesis-title">Synthesizing response...</span>
+                          <div className="neural-live-bars" aria-hidden>
+                            <span className="bar b1" />
+                            <span className="bar b2" />
+                            <span className="bar b3" />
+                            <span className="bar b4" />
+                          </div>
+                        </div>
+                        <span className="neural-synthesis-sub">Analyzing workspace context and preparing execution plan</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="neural-synthesis-stop-btn"
+                      onClick={stop}
+                      title="Interrupt generation"
+                    >
+                      <StopIcon size={12} />
+                      <span>Stop</span>
+                    </button>
                   </div>
                 )}
 

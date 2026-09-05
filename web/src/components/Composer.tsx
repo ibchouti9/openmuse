@@ -238,15 +238,15 @@ export default function Composer({
               onClick={() => setSettingsOpen((v) => !v)}
               title="Configure model, effort level, and tool approvals"
             >
-              <SlidersIcon size={13} />
+              <SlidersIcon size={12} />
               <span className="action-pill-text">{model}</span>
-              {effort && <span className="effort-badge">{effortLabel}</span>}
+              {effort && <span className={`effort-badge effort-${effort}`}>{effortLabel}</span>}
               {approvalMode === "allowAll" && (
                 <span className="approval-badge-warning" title="Auto-accept is enabled: tools run without confirmation">
                   Auto
                 </span>
               )}
-              <ChevronDownIcon size={12} />
+              <ChevronDownIcon size={12} className={`pill-chevron ${settingsOpen ? "open" : ""}`} />
             </button>
 
             {settingsOpen && (
@@ -336,7 +336,7 @@ export default function Composer({
               onClick={onStop}
               title="Interrupt and stop response generation"
             >
-              <StopIcon size={14} />
+              <span className="stop-square-indicator" />
               <span>Stop</span>
             </button>
           ) : (
@@ -351,7 +351,7 @@ export default function Composer({
               aria-label="Send message"
               title={canSend ? "Send (Enter)" : "Enter a prompt or attach files"}
             >
-              <ArrowUpIcon size={16} />
+              <ArrowUpIcon size={15} />
             </button>
           )}
         </div>
