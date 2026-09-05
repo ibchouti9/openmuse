@@ -1,4 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  CameraIcon,
+  CloseIcon,
+  ExternalLinkIcon,
+  GlobeIcon,
+  RefreshCwIcon,
+} from "./components/Icons";
 
 declare global {
   interface Window {
@@ -12,7 +19,6 @@ declare global {
 }
 
 const IS_DESKTOP = typeof window !== "undefined" && !!window.openmuse?.desktop;
-// "webview" is an Electron-only tag unknown to React's JSX types.
 const WebviewTag: any = "webview";
 
 const PRESETS = [
@@ -81,8 +87,6 @@ export default function BrowserPanel({
     setShot(null);
     setInput(url);
     setSrc(url);
-    // Remount the guest even for a same-URL Go/Retry so navigation events
-    // fire and `loading` always resolves instead of sticking on.
     setFrameKey((k) => k + 1);
     try {
       localStorage.setItem("openmuse.browserUrl", url);
@@ -91,7 +95,6 @@ export default function BrowserPanel({
     }
   }
 
-  // Wire Electron webview navigation events whenever the guest exists.
   useEffect(() => {
     const wv = webRef.current;
     if (!IS_DESKTOP || !wv || !src) return;
@@ -127,7 +130,7 @@ export default function BrowserPanel({
       if (e && e.title) setTitle(String(e.title));
     };
     const onFail = (e: any) => {
-      if (e && e.errorCode === -3) return; // ERR_ABORTED, e.g. superseded nav
+      if (e && e.errorCode === -3) return;
       setLoading(false);
       setErr(`Failed to load (${e?.errorCode ?? "?"}): ${e?.errorDescription || "unknown error"}`);
     };
@@ -147,9 +150,6 @@ export default function BrowserPanel({
     };
   }, [src]);
 
-  // Watchdog: never spin forever. Frame-blocking sites (X-Frame-Options)
-  // and stalled dev servers may never resolve `loading`; after 30s stop
-  // the spinner so the pane degrades to its error/empty state instead.
   useEffect(() => {
     if (!loading) return;
     const t = setTimeout(() => setLoading(false), 30000);
@@ -164,12 +164,12 @@ export default function BrowserPanel({
   async function screenshot() {
     setErr(null);
     if (!IS_DESKTOP || !window.openmuse?.captureBrowser) {
-      setErr("Screenshots need the OpenMuse desktop app — a plain browser tab can't capture other sites.");
+      setErr("Screenshots require the OpenMuse desktop app.");
       return;
     }
     const id = guestId();
     if (id == null) {
-      setErr("Browser view isn't ready yet — wait for the page to load.");
+      setErr("Browser preview is not ready yet.");
       return;
     }
     setShotBusy(true);
@@ -177,7 +177,7 @@ export default function BrowserPanel({
       const r = await window.openmuse.captureBrowser(id);
       setShot(r.dataUrl);
     } catch (e: any) {
-      setErr(e?.message || "Screenshot failed");
+      setErr(e?.message || "Screenshot capture failed");
     } finally {
       setShotBusy(false);
     }
@@ -189,7 +189,7 @@ export default function BrowserPanel({
     try {
       await window.openmuse.openBrowserDevTools(id);
     } catch (e: any) {
-      setErr(e?.message || "DevTools failed");
+      setErr(e?.message || "DevTools launch failed");
     }
   }
 
@@ -220,93 +220,123 @@ export default function BrowserPanel({
   const canGo = !!input.trim();
 
   return (
-    <section className="browser" aria-label="Browser preview">
-      <div className="bhead">
-        <span className="btitle" title={title || src || "Browser"}>
-          {loading ? "Loading…" : title || "Browser"}
-        </span>
-        <span className="spacer" />
-        <button className="mini" onClick={() => screenshot()} disabled={shotBusy}>
-          {shotBusy ? "Capturing…" : "Screenshot"}
-        </button>
-        <button className="mini" onClick={onClose} title="Close browser pane">
-          Close
-        </button>
+    <section className="browser-pane" aria-label="Web Inspector & Preview">
+      {/* Top Header */}
+      <div className="browser-pane-header">
+        <div className="browser-title-group">
+          <GlobeIcon size={14} className="browser-header-globe" />
+          <span className="browser-header-title" title={title || src || "Browser Preview"}>
+            {loading ? "Loading..." : title || "Browser Preview"}
+          </span>
+        </div>
+        <div className="browser-header-actions">
+          <button
+            type="button"
+            className="browser-icon-btn"
+            onClick={() => screenshot()}
+            disabled={shotBusy || !src}
+            title="Capture page screenshot"
+          >
+            <CameraIcon size={14} />
+            <span className="btn-text">{shotBusy ? "Snapping..." : "Capture"}</span>
+          </button>
+          <button
+            type="button"
+            className="browser-icon-btn close"
+            onClick={onClose}
+            title="Close browser pane"
+          >
+            <CloseIcon size={14} />
+          </button>
+        </div>
       </div>
+
+      {/* Navigation bar */}
       <form
-        className="bnav"
+        className="browser-nav-bar"
         onSubmit={(e) => {
           e.preventDefault();
           go(input);
         }}
       >
-        <button
-          type="button"
-          className="iconbtn bnavbtn"
-          title={IS_DESKTOP ? "Back" : "Back (needs desktop app)"}
-          aria-label="Back"
-          disabled={!IS_DESKTOP || !nav.back}
-          onClick={() => webRef.current?.goBack?.()}
-        >
-          ←
-        </button>
-        <button
-          type="button"
-          className="iconbtn bnavbtn"
-          title={IS_DESKTOP ? "Forward" : "Forward (needs desktop app)"}
-          aria-label="Forward"
-          disabled={!IS_DESKTOP || !nav.fwd}
-          onClick={() => webRef.current?.goForward?.()}
-        >
-          →
-        </button>
-        <button
-          type="button"
-          className="iconbtn bnavbtn"
-          title="Reload"
-          aria-label="Reload"
-          disabled={!src}
-          onClick={() => {
-            if (webRef.current?.reload) webRef.current.reload();
-            else setFrameKey((k) => k + 1);
-          }}
-        >
-          ⟳
-        </button>
-        <input
-          className="burl"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Type a URL — e.g. localhost:3000"
-          spellCheck={false}
-          autoCapitalize="off"
-          autoCorrect="off"
-          aria-label="Browser address"
-        />
-        <button type="submit" className="primary bgo" disabled={!canGo}>
+        <div className="nav-controls-group">
+          <button
+            type="button"
+            className="browser-nav-btn"
+            title={IS_DESKTOP ? "Back" : "Back (needs desktop app)"}
+            aria-label="Back"
+            disabled={!IS_DESKTOP || !nav.back}
+            onClick={() => webRef.current?.goBack?.()}
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            className="browser-nav-btn"
+            title={IS_DESKTOP ? "Forward" : "Forward (needs desktop app)"}
+            aria-label="Forward"
+            disabled={!IS_DESKTOP || !nav.fwd}
+            onClick={() => webRef.current?.goForward?.()}
+          >
+            ›
+          </button>
+          <button
+            type="button"
+            className="browser-nav-btn"
+            title="Reload"
+            aria-label="Reload"
+            disabled={!src}
+            onClick={() => {
+              if (webRef.current?.reload) webRef.current.reload();
+              else setFrameKey((k) => k + 1);
+            }}
+          >
+            <RefreshCwIcon size={12} className={loading ? "spin" : ""} />
+          </button>
+        </div>
+
+        <div className="browser-omnibox-wrapper">
+          <span className="omnibox-scheme-badge">http</span>
+          <input
+            className="browser-omnibox-input"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Type a URL or select preset below..."
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            aria-label="Browser address"
+          />
+        </div>
+
+        <button type="submit" className="browser-go-btn" disabled={!canGo}>
           Go
         </button>
       </form>
-      <div className="bpresets">
+
+      {/* Presets */}
+      <div className="browser-presets-bar">
         {PRESETS.map((p) => (
-          <button key={p.url} className={src === p.url ? "on" : ""} onClick={() => go(p.url)} title={p.url}>
+          <button
+            key={p.url}
+            type="button"
+            className={`preset-pill ${src === p.url ? "active" : ""}`}
+            onClick={() => go(p.url)}
+            title={p.url}
+          >
             {p.label}
           </button>
         ))}
       </div>
-      {!IS_DESKTOP && (
-        <p className="bhint">
-          Web mode renders pages in a plain frame — some sites block framing. Full navigation, zoom, and screenshots
-          need the OpenMuse desktop app.
-        </p>
-      )}
-      <div className="bview" aria-busy={loading} aria-live="off">
+
+      {/* Viewport Frame */}
+      <div className="browser-viewport-container" aria-busy={loading}>
         {src ? (
           IS_DESKTOP ? (
             <WebviewTag
               key={`${src}-${frameKey}`}
               ref={webRef}
-              className="bwebview"
+              className="browser-webview-element"
               src={src}
               partition="persist:openmuse-browser"
               allowpopups
@@ -314,7 +344,7 @@ export default function BrowserPanel({
           ) : (
             <iframe
               key={`${src}-${frameKey}`}
-              className="bwebview"
+              className="browser-webview-element"
               src={src}
               title="Browser preview"
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
@@ -322,64 +352,97 @@ export default function BrowserPanel({
             />
           )
         ) : (
-          <div className="bempty" role="status">
-            <p className="bempty-title">Preview your work</p>
-            <p className="bempty-sub">Type any URL above — your dev server, localhost, or a live site — or pick a preset.</p>
+          <div className="browser-empty-state">
+            <GlobeIcon size={36} />
+            <h4 className="empty-title">Live App Preview</h4>
+            <p className="empty-desc">
+              Inspect your local dev servers, test web apps, or preview builds alongside your chat.
+            </p>
           </div>
         )}
+
         {loading && (
-          <div className="bloading" aria-hidden>
-            <span className="sr">Loading page…</span>
+          <div className="browser-loading-bar">
+            <div className="loading-progress" />
           </div>
         )}
       </div>
+
       {err && (
-        <div className="err berr" role="alert">
+        <div className="browser-error-banner">
           <span>{err}</span>
-          <div className="row berrrow">
-            {src && (
-              <button className="mini" onClick={() => go(src)}>
-                Retry
-              </button>
-            )}
-            <button className="mini" onClick={() => setErr(null)}>
-              Dismiss
-            </button>
-          </div>
+          <button type="button" className="error-retry-btn" onClick={() => go(src)}>
+            Retry
+          </button>
+          <button type="button" className="error-dismiss-btn" onClick={() => setErr(null)}>
+            Dismiss
+          </button>
         </div>
       )}
-      <div className="btools">
-        <button className="mini" disabled={!src} onClick={() => go(src)} title="Reload the page">
-          Reload
+
+      {/* Bottom Tools Toolbar */}
+      <div className="browser-tools-bar">
+        <button
+          type="button"
+          className="tool-btn"
+          disabled={!src || !IS_DESKTOP}
+          onClick={() => setZoomLevel(zoom - 0.1)}
+          title="Zoom out"
+        >
+          −
         </button>
-        <button className="mini" disabled={!src || !IS_DESKTOP} onClick={() => setZoomLevel(zoom - 0.1)} title={IS_DESKTOP ? "Zoom out" : "Zoom needs the desktop app"}>
-          A−
+        <span className="tool-zoom-text">{Math.round(zoom * 100)}%</span>
+        <button
+          type="button"
+          className="tool-btn"
+          disabled={!src || !IS_DESKTOP}
+          onClick={() => setZoomLevel(zoom + 0.1)}
+          title="Zoom in"
+        >
+          +
         </button>
-        <span className="bzoom" title="Page zoom">
-          {Math.round(zoom * 100)}%
-        </span>
-        <button className="mini" disabled={!src || !IS_DESKTOP} onClick={() => setZoomLevel(zoom + 0.1)} title={IS_DESKTOP ? "Zoom in" : "Zoom needs the desktop app"}>
-          A+
+        <div className="tool-separator" />
+        <button
+          type="button"
+          className="tool-action-btn"
+          disabled={!src || !IS_DESKTOP}
+          onClick={toggleDevTools}
+          title="Open Chromium DevTools"
+        >
+          Inspect DevTools
         </button>
-        <button className="mini" disabled={!src || !IS_DESKTOP} onClick={() => toggleDevTools()} title="Inspect the page">
-          Inspect
-        </button>
-        <button className="mini" disabled={!src} onClick={openExternal} title="Open in system browser">
-          Open ↗
+        <button
+          type="button"
+          className="tool-action-btn"
+          disabled={!src}
+          onClick={openExternal}
+          title="Open in default browser"
+        >
+          <ExternalLinkIcon size={12} />
+          <span>Open External</span>
         </button>
       </div>
+
+      {/* Screenshot attachment preview */}
       {shot && (
-        <div className="bshot">
-          <img src={shot} alt="Browser screenshot preview" />
-          <div className="row bshotrow">
-            <button className="primary" onClick={() => onAttach(shot, shotName(src))}>
-              Attach to chat
+        <div className="browser-shot-modal">
+          <img src={shot} alt="Screenshot preview" className="shot-preview-img" />
+          <div className="shot-actions-row">
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => {
+                onAttach(shot, shotName(src));
+                setShot(null);
+              }}
+            >
+              Attach to Chat
             </button>
-            <button className="ghost" onClick={downloadShot}>
-              Download
+            <button type="button" className="btn-secondary" onClick={downloadShot}>
+              Download PNG
             </button>
-            <button className="ghost" onClick={() => setShot(null)}>
-              Discard
+            <button type="button" className="btn-ghost" onClick={() => setShot(null)}>
+              Dismiss
             </button>
           </div>
         </div>

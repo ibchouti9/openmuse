@@ -3,45 +3,35 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { api, exportSession, ops, subscribe, turnCancel } from "./api";
 import BrowserPanel from "./BrowserPanel";
-import { applyItemDelta, genericRowText, groupThread, thinkingLive, ThreadItem } from "./threading";
+import { applyItemDelta, groupThread, ThreadItem } from "./threading";
+
+import {
+  CodeIcon,
+  DownloadIcon,
+  ExternalLinkIcon,
+  GitBranchIcon,
+  GitForkIcon,
+  GlobeIcon,
+  MessageSquareIcon,
+  Minimize2Icon,
+  PlusIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  SettingsIcon,
+  SidebarIcon,
+  SparklesIcon,
+  UserIcon,
+} from "./components/Icons";
+import Composer, { Attachment } from "./components/Composer";
+import ThinkingBlock from "./components/ThinkingBlock";
+import ApprovalCard, { Approval } from "./components/ApprovalCard";
+import QuestionCard, { InputPrompt } from "./components/QuestionCard";
+import GitMenu, { GitStatus } from "./components/GitMenu";
+import WorkspacePicker from "./components/WorkspacePicker";
+import SettingsView from "./components/SettingsView";
+import AccountView from "./components/AccountView";
 
 interface Item extends ThreadItem {}
-
-interface Choice {
-  choiceId: string;
-  label: string;
-  decision: string;
-  scope: string;
-  acceptsFeedback?: boolean;
-  rulePreview?: string;
-}
-
-interface Approval {
-  approvalId: string;
-  sessionId: string;
-  toolName: string;
-  subject: any;
-  rawArgs?: string;
-  availableChoices: Choice[];
-  currentRequirementId: unknown;
-  settled?: boolean;
-}
-
-interface Question {
-  id: string;
-  header: string;
-  question: string;
-  selection: { mode: string; minSelections?: number; maxSelections?: number };
-  options: { label: string; description?: string }[];
-}
-
-interface InputPrompt {
-  userInputId: string;
-  sessionId: string;
-  toolName: string;
-  questions: Question[];
-  settled?: boolean;
-}
 
 interface Session {
   sessionId: string;
@@ -57,19 +47,16 @@ interface Todo {
   activeForm?: string;
 }
 
-interface Attachment {
-  id: string;
-  kind: "image" | "text";
-  name: string;
-  mime: string;
-  size: number;
-  dataUrl?: string;
-  text?: string;
-  width?: number;
-  height?: number;
-  ready: boolean;
-  error?: string;
-}
+const DEFAULT_MODEL = "muse-spark-1.3";
+
+const APPROVAL_LABELS: Record<string, string> = {
+  denyUnmatched: "Deny new",
+  onRequest: "Ask",
+  promptUnmatched: "Ask new",
+  allowAll: "Auto-accept",
+};
+
+type Tab = "chat" | "settings" | "account";
 
 const TEXT_EXTS = new Set([
   "txt", "md", "markdown", "json", "jsonl", "csv", "tsv", "log", "js", "jsx", "ts", "tsx",
@@ -103,31 +90,6 @@ function wireToItem(it: any): Item {
   };
 }
 
-function renderSubject(subject: any): string {
-  if (subject == null) return "";
-  if (typeof subject === "string") return subject;
-  if (subject.kind === "shell") {
-    const stage = subject.stages && subject.stages[0];
-    const argv = stage && stage.argv ? stage.argv.join(" ") : subject.command;
-    return `$ ${argv || subject.command || ""}`;
-  }
-  try {
-    return JSON.stringify(subject, null, 2);
-  } catch {
-    return String(subject);
-  }
-}
-
-function parseArgs(args?: string): string {
-  if (!args) return "";
-  try {
-    const o = JSON.parse(args);
-    return o.command || o.description || args;
-  } catch {
-    return args;
-  }
-}
-
 function escHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -137,7 +99,7 @@ marked.use({
     code({ text, lang }: any) {
       return (
         `<div class="codeblock"><div class="codehead"><span>${escHtml(lang || "code")}</span>` +
-        `<button data-code="${encodeURIComponent(text)}">Copy</button></div>` +
+        `<button type="button" data-code="${encodeURIComponent(text)}">Copy</button></div>` +
         `<pre><code>${escHtml(text)}</code></pre></div>`
       );
     },
@@ -152,1193 +114,47 @@ function Markdown({ text }: { text: string }) {
     const raw = marked.parse(text || "", { async: false }) as string;
     return DOMPurify.sanitize(raw, { ADD_ATTR: ["data-code"] });
   }, [text]);
+
   function onClick(e: React.MouseEvent) {
     const el = (e.target as HTMLElement).closest("[data-code]");
     if (!el) return;
     const btn = el as HTMLButtonElement;
     navigator.clipboard?.writeText(decodeURIComponent(el.getAttribute("data-code") || "")).then(() => {
-      btn.textContent = "Copied";
-      setTimeout(() => (btn.textContent = "Copy"), 1200);
-    });
-  }
-  return <div className="md" onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />;
-}
-
-function choiceText(c: Choice): string {
-  return `${c.decision || ""} ${c.choiceId || ""} ${c.label || ""}`.toLowerCase();
-}
-
-function isDestructiveChoice(c: Choice): boolean {
-  return /abort|deny|denied|reject|revoke|never|stop|cancel/.test(choiceText(c));
-}
-
-function isAllowChoice(c: Choice): boolean {
-  return /approv|allow|accept|always|once|confirm|proceed|continue/.test(choiceText(c));
-}
-
-function ApprovalCard({ a, onDecide }: { a: Approval; onDecide: (a: Approval, choiceId: string, feedback?: string) => void | Promise<void> }) {
-  const [feedback, setFeedback] = useState("");
-  const [pendingId, setPendingId] = useState<string | null>(null);
-  const choices = a.availableChoices;
-  const canFeedback = choices.some((c) => c.acceptsFeedback);
-  const feedbackChoice = choices.find((c) => c.acceptsFeedback);
-  const feedbackLabel = feedbackChoice ? feedbackChoice.label || feedbackChoice.choiceId : "Reject";
-  const destructiveIndex = choices.findIndex(isDestructiveChoice);
-  const safestIndex = destructiveIndex >= 0 ? destructiveIndex : 0;
-  const busy = pendingId !== null;
-
-  function pick(index: number) {
-    const c = choices[index];
-    if (!c || pendingId !== null) return;
-    setPendingId(c.choiceId);
-    Promise.resolve(onDecide(a, c.choiceId, c.acceptsFeedback ? feedback || undefined : undefined)).catch(() =>
-      setPendingId(null),
-    );
-  }
-
-  function onKeyDown(e: React.KeyboardEvent) {
-    const t = e.target as HTMLElement | null;
-    const inField = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA");
-    if (e.key === "Enter" && inField) {
-      e.preventDefault();
-      const fb = choices.findIndex((c) => c.acceptsFeedback);
-      pick(fb >= 0 ? fb : safestIndex);
-      return;
-    }
-    if (inField || e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key.length === 1) {
-      const n = Number(e.key);
-      if (Number.isInteger(n) && n >= 1 && n <= Math.min(choices.length, 9)) {
-        e.preventDefault();
-        pick(n - 1);
-      }
-    }
-  }
-
-  return (
-    <div className="approval" role="group" aria-label={`Approval request for ${a.toolName}`} aria-busy={busy} onKeyDown={onKeyDown}>
-      <div className="who">Needs approval · {a.toolName}</div>
-      <pre className="body">{renderSubject(a.subject)}</pre>
-      {a.rawArgs && (
-        <details className="rawargs">
-          <summary>Arguments</summary>
-          <pre className="body">{a.rawArgs}</pre>
-        </details>
-      )}
-      {choices.map((c) => c.rulePreview).filter(Boolean)[0] && (
-        <p className="rule">{choices.map((c) => c.rulePreview).filter(Boolean)[0]}</p>
-      )}
-      <div className="row">
-        {choices.map((c, i) => {
-          const kind = isDestructiveChoice(c) ? "destructive" : isAllowChoice(c) ? "allow" : "";
-          return (
-            <button
-              key={c.choiceId}
-              className={kind ? `choice ${kind}` : "choice"}
-              autoFocus={i === safestIndex}
-              disabled={busy}
-              aria-label={`${c.label || c.choiceId} (press ${i + 1} of ${choices.length})`}
-              title={i < 9 ? `Press ${i + 1}` : undefined}
-              onClick={() => pick(i)}
-            >
-              {i < 9 && (
-                <kbd className="key" aria-hidden>
-                  {i + 1}
-                </kbd>
-              )}
-              {c.label || c.choiceId}
-            </button>
-          );
-        })}
-        {choices.length === 0 && <span className="hint">waiting on host…</span>}
-      </div>
-      {canFeedback && (
-        <input
-          className="feedback"
-          value={feedback}
-          onChange={(e) => setFeedback(e.target.value)}
-          placeholder={`Feedback to the model (sent with ${feedbackLabel})`}
-          aria-label="Feedback to the model"
-          disabled={busy}
-        />
-      )}
-    </div>
-  );
-}
-
-function questionBounds(qq: Question): { min: number; max: number } {
-  const multi = qq.selection.mode === "multiple";
-  const min = qq.selection.minSelections ?? 1;
-  const max = qq.selection.maxSelections ?? (multi ? qq.options.length : 1);
-  return { min, max };
-}
-
-function questionReady(qq: Question, sel: string[], ft: string): boolean {
-  if (ft.trim()) return true;
-  const { min, max } = questionBounds(qq);
-  return sel.length >= min && sel.length <= max;
-}
-
-function requirementText(qq: Question, count: number, overridden: boolean): string {
-  if (overridden) return "free text overrides selections above";
-  const { min, max } = questionBounds(qq);
-  if (min === max) return `${count} of ${max} selected`;
-  return `${count} selected · ${min}–${max} required`;
-}
-
-function QuestionCard({ q, onAnswer, onCancel }: { q: InputPrompt; onAnswer: (answers: any[]) => void; onCancel: () => void }) {
-  const [picked, setPicked] = useState<Record<string, string[]>>({});
-  const [free, setFree] = useState<Record<string, string>>({});
-
-  function toggle(qid: string, label: string, multi: boolean, max: number) {
-    setPicked((p) => {
-      const cur = p[qid] || [];
-      if (cur.includes(label)) return { ...p, [qid]: cur.filter((l) => l !== label) };
-      if (multi) {
-        if (cur.length >= max) return p;
-        return { ...p, [qid]: [...cur, label] };
-      }
-      return { ...p, [qid]: [label] };
+      btn.textContent = "✓ Copied";
+      setTimeout(() => (btn.textContent = "Copy"), 1400);
     });
   }
 
-  const ready = q.questions.every((qq) => questionReady(qq, picked[qq.id] || [], free[qq.id] || ""));
-
-  function submit() {
-    if (!ready) return;
-    const answers = q.questions.map((qq) => {
-      const sel = picked[qq.id] || [];
-      const ft = (free[qq.id] || "").trim();
-      if (ft) return { questionId: qq.id, freeText: ft.slice(0, 500) };
-      if (qq.selection.mode === "multiple") return { questionId: qq.id, selectedLabels: sel };
-      return { questionId: qq.id, selectedLabel: sel[0] };
-    });
-    onAnswer(answers);
-  }
-
-  return (
-    <div className="question">
-      <div className="who">Question · {q.toolName}</div>
-      {q.questions.map((qq) => {
-        const sel = picked[qq.id] || [];
-        const ft = free[qq.id] || "";
-        const overridden = !!ft.trim();
-        const { max } = questionBounds(qq);
-        const multi = qq.selection.mode === "multiple";
-        return (
-          <div key={qq.id} className="qblock">
-            <p className="qtext">
-              <strong>{qq.header}:</strong> {qq.question}
-            </p>
-            <div className="row">
-              {qq.options.map((o) => {
-                const on = sel.includes(o.label);
-                return (
-                  <button key={o.label} className={on ? "choice on" : "choice"} onClick={() => toggle(qq.id, o.label, multi, max)} title={o.description}>
-                    {o.label}
-                  </button>
-                );
-              })}
-            </div>
-            <span className="hint">{requirementText(qq, sel.length, overridden)}</span>
-            <input
-              className="feedback"
-              value={ft}
-              onChange={(e) => setFree((f) => ({ ...f, [qq.id]: e.target.value }))}
-              placeholder="Or type an answer instead (overrides selections above)"
-              aria-label="Free-text answer (overrides selections above)"
-            />
-          </div>
-        );
-      })}
-      <div className="row">
-        <button className="primary" onClick={submit} disabled={!ready} title={ready ? undefined : "Select the required options or type an answer"}>
-          Answer
-        </button>
-        <button className="ghost" onClick={onCancel}>
-          Skip
-        </button>
-      </div>
-    </div>
-  );
+  return <div className="md-content" onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-// Default model when the user hasn't picked one (no "Auto" option;
-// sessions always pin a concrete model).
-const DEFAULT_MODEL = "muse-spark-1.3";
+function groupSessionsByDate(sessions: Session[]) {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const yesterdayStart = todayStart - 86400000;
+  const last7DaysStart = todayStart - 6 * 86400000;
 
-// Approval modes ranked least permissive → most permissive.
-const APPROVAL_LABELS: Record<string, string> = {
-  denyUnmatched: "Deny new",
-  onRequest: "Ask",
-  promptUnmatched: "Ask new",
-  allowAll: "Auto-accept",
-};
+  const groups: { label: string; sessions: Session[] }[] = [
+    { label: "Today", sessions: [] },
+    { label: "Yesterday", sessions: [] },
+    { label: "Previous 7 Days", sessions: [] },
+    { label: "Older", sessions: [] },
+  ];
 
-function SlidersIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden>
-      <line x1="2" y1="5" x2="14" y2="5" />
-      <circle cx="6" cy="5" r="2" fill="var(--card)" />
-      <line x1="2" y1="11" x2="14" y2="11" />
-      <circle cx="11" cy="11" r="2" fill="var(--card)" />
-    </svg>
-  );
-}
-
-function Composer({
-  input,
-  setInput,
-  busy,
-  models,
-  model,
-  onModel,
-  effort,
-  onEffort,
-  approvalMode,
-  onApproval,
-  folderName,
-  folderPath,
-  onPickFolder,
-  onSend,
-  onStop,
-  attachments,
-  onAddFiles,
-  onRemoveAttachment,
-}: {
-  input: string;
-  setInput: (s: string) => void;
-  busy: boolean;
-  models: string[];
-  model: string;
-  onModel: (m: string) => void;
-  effort: string;
-  onEffort: (e: string) => void;
-  approvalMode: string;
-  onApproval: (m: string) => void;
-  folderName: string;
-  folderPath: string;
-  onPickFolder: () => void;
-  onSend: () => void;
-  onStop: () => void;
-  attachments: Attachment[];
-  onAddFiles: (files: File[]) => void;
-  onRemoveAttachment: (id: string) => void;
-}) {
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const readyCount = attachments.filter((a) => a.ready && !a.error).length;
-  const canSend = !!input.trim() || readyCount > 0;
-  const modelOptions = models.includes(DEFAULT_MODEL) ? models : [DEFAULT_MODEL, ...models];
-  const approvalLabel = APPROVAL_LABELS[approvalMode] || approvalMode;
-  const effortLabel = effort || "Auto";
-  const modelEffort = `${model} · ${effortLabel}`;
-  const modelEffortTitle = `Model ${model} · Effort ${effortLabel}`;
-
-  return (
-    <div
-      className={`composer-inner${dragOver ? " drag" : ""}`}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setDragOver(true);
-      }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setDragOver(false);
-        const files = [...e.dataTransfer.files];
-        if (files.length > 0) onAddFiles(files);
-      }}
-    >
-      {attachments.length > 0 && (
-        <div className="attachrow">
-          {attachments.map((a) => (
-            <span key={a.id} className="chip" title={a.error || `${a.name} · ${Math.round(a.size / 1024)}KB`}>
-              {a.kind === "image" ? (
-                a.dataUrl ? (
-                  <img className="chipimg" src={a.dataUrl} alt="" />
-                ) : (
-                  <span className="chipspin" aria-hidden />
-                )
-              ) : (
-                <span className="fileglyph" aria-hidden>
-                  ≡
-                </span>
-              )}
-              <span className="chipname">{a.ready ? a.name : "Reading…"}</span>
-              {a.error && <span className="chiperr">{a.error}</span>}
-              <button className="chipx" onClick={() => onRemoveAttachment(a.id)} aria-label={`Remove ${a.name}`}>
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      <textarea
-        id="composer-input"
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            setSettingsOpen(false);
-            return;
-          }
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            setSettingsOpen(false);
-            onSend();
-          }
-        }}
-        onPaste={(e) => {
-          const files = [...(e.clipboardData?.files || [])];
-          if (files.length > 0) {
-            e.preventDefault();
-            onAddFiles(files);
-          }
-        }}
-        placeholder="How can Muse help you today? Paste images or drop files anywhere here. (Enter to send, Shift+Enter for newline)"
-        rows={2}
-        title="Enter to send · Shift+Enter for newline · Cmd/Ctrl+K focuses here"
-      />
-      <div className="bar single">
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          accept="image/*,.txt,.md,.markdown,.json,.jsonl,.csv,.tsv,.log,.js,.jsx,.ts,.tsx,.py,.rb,.go,.rs,.java,.c,.h,.cpp,.hpp,.cs,.sh,.yml,.yaml,.toml,.ini,.css,.html,.xml,.sql,.swift,.kt,.scala,.php"
-          style={{ display: "none" }}
-          onChange={(e) => {
-            const files = [...(e.target.files || [])];
-            e.target.value = "";
-            if (files.length > 0) onAddFiles(files);
-          }}
-        />
-        <button className="iconbtn" onClick={() => fileRef.current?.click()} title="Attach images or text files">
-          +
-        </button>
-        <button
-          className="settingbtn"
-          onClick={() => setSettingsOpen((v) => !v)}
-          title="Session settings: folder, model, effort, approval"
-        >
-          <SlidersIcon />
-          <span className="sumchips">
-            <span className="sumchip" title={folderPath || folderName}>
-              {folderName}
-            </span>
-            <span className="sumchip" title={modelEffortTitle}>
-              {modelEffort}
-            </span>
-            <span className={approvalMode === "allowAll" ? "sumchip warn" : "sumchip"} title={`Approval ${approvalLabel}`}>
-              {approvalLabel}
-            </span>
-          </span>
-          <span className="chev" aria-hidden>
-            ▾
-          </span>
-        </button>
-        <span className="spacer" />
-        {busy ? (
-          <button className="danger" onClick={onStop}>
-            Stop
-          </button>
-        ) : (
-          <button
-            className="send"
-            onClick={() => {
-              setSettingsOpen(false);
-              onSend();
-            }}
-            disabled={!canSend}
-            aria-label="Send"
-          >
-            ↑
-          </button>
-        )}
-      </div>
-      {settingsOpen && (
-        <>
-          <div className="menuveil" onClick={() => setSettingsOpen(false)} />
-          <div className="settingspop">
-            <div className="spblock">
-              <div className="sprow">
-                <span>Folder</span>
-                <button className="mini" onClick={onPickFolder} title={folderPath || "Server default folder"}>
-                  {folderName}
-                </button>
-              </div>
-              <p className="sphint">New chats run in this folder.</p>
-            </div>
-            <div className="spblock">
-              <div className="sprow">
-                <span>Model</span>
-                <select className="pill select" value={model} onChange={(e) => onModel(e.target.value)} title="Model">
-                  {modelOptions.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <p className="sphint">Pinned model for this session.</p>
-            </div>
-            <div className="spblock">
-              <div className="sprow">
-                <span>Effort</span>
-                <select className="pill select" value={effort} onChange={(e) => onEffort(e.target.value)} title="Reasoning effort">
-                  <option value="">Auto</option>
-                  <option value="none">none</option>
-                  <option value="minimal">minimal</option>
-                  <option value="low">low</option>
-                  <option value="medium">medium</option>
-                  <option value="high">high</option>
-                  <option value="xhigh">xhigh</option>
-                  <option value="ultra">ultra</option>
-                </select>
-              </div>
-              <p className="sphint">Higher effort reasons longer.</p>
-            </div>
-            <div className="spblock">
-              <div className="sprow">
-                <span>Approval</span>
-                <select
-                  className="pill select"
-                  value={approvalMode}
-                  onChange={(e) => onApproval(e.target.value)}
-                  title="Approval enforcement"
-                >
-                  <option value="denyUnmatched">Deny new</option>
-                  <option value="onRequest">Ask</option>
-                  <option value="promptUnmatched">Ask new</option>
-                  <option value="allowAll">Auto-accept</option>
-                </select>
-              </div>
-              <p className="sphint">Auto-accept runs tools without asking.</p>
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function WorkspacePicker({ initial, onPick, onClose }: { initial: string; onPick: (p: string) => void; onClose: () => void }) {
-  const [path, setPath] = useState(initial);
-  const [entries, setEntries] = useState<{ name: string; path: string }[]>([]);
-  const [filter, setFilter] = useState("");
-  const [err, setErr] = useState<string | null>(null);
-
-  const load = useCallback(async (p: string) => {
-    setErr(null);
-    try {
-      const r = await api(`/api/dirs?path=${encodeURIComponent(p || "~")}`);
-      setPath(r.path);
-      setEntries(r.entries);
-    } catch (e: any) {
-      setErr(e.message);
-    }
-  }, []);
-
-  useEffect(() => {
-    load(initial || "~");
-  }, [load, initial]);
-
-  const crumbs = path.split("/").filter(Boolean);
-  const shown = filter ? entries.filter((d) => d.name.toLowerCase().includes(filter.toLowerCase())) : entries;
-
-  return (
-    <div className="overlay" onClick={onClose}>
-      <div className="picker" onClick={(e) => e.stopPropagation()}>
-        <div className="picker-h">Choose working folder</div>
-        <p className="hint">New chats run here. The model reads and edits files under this folder.</p>
-        <div className="crumbs">
-          <button className={crumbs.length === 0 ? "on" : ""} onClick={() => load("/")}>
-            /
-          </button>
-          {crumbs.map((c, i) => (
-            <span key={i} className="crumb">
-              <span className="sep">›</span>
-              <button
-                className={i === crumbs.length - 1 ? "on" : ""}
-                onClick={() => load("/" + crumbs.slice(0, i + 1).join("/"))}
-              >
-                {c}
-              </button>
-            </span>
-          ))}
-        </div>
-        <input
-          className="feedback filter"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="Filter folders…"
-        />
-        {err && <p className="err">{err}</p>}
-        <div className="dirlist">
-          {shown.map((d) => (
-            <button key={d.path} className="dir" onClick={() => load(d.path)} title={d.path}>
-              <span className="dname">{d.name}</span>
-            </button>
-          ))}
-          {shown.length === 0 && !err && <p className="hint">No subfolders.</p>}
-        </div>
-        <div className="row picker-foot">
-          <span className="curpath" title={path}>
-            {path || "…"}
-          </span>
-          <span className="spacer" />
-          <button className="primary" onClick={() => onPick(path)}>
-            Use this folder
-          </button>
-          <button className="ghost" onClick={onClose}>
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-interface GitStatus {
-  repo: boolean;
-  root?: string;
-  branch?: string | null;
-  upstream?: string | null;
-  ahead?: number;
-  behind?: number;
-  hasRemote?: boolean;
-  staged?: number;
-  unstaged?: number;
-  untracked?: number;
-  total?: number;
-  truncated?: boolean;
-  files?: { path: string; code: string; staged: boolean; unstaged: boolean; untracked: boolean }[];
-}
-
-function GitMenu({
-  status,
-  loading,
-  workspace,
-  onRefresh,
-  onCommit,
-  onPush,
-  onPr,
-  busyAction,
-  note,
-}: {
-  status: GitStatus | null;
-  loading: boolean;
-  workspace: string;
-  onRefresh: () => void;
-  onCommit: (message: string, push: boolean) => void;
-  onPush: () => void;
-  onPr: (title: string, body: string) => void;
-  busyAction: string | null;
-  note: string | null;
-}) {
-  const [message, setMessage] = useState("");
-  const [prTitle, setPrTitle] = useState("");
-  const [prBody, setPrBody] = useState("");
-  const [showPr, setShowPr] = useState(false);
-  const busyAny = busyAction != null;
-  const changes = status?.total || 0;
-
-  return (
-    <div className="gitmenu">
-      <div className="githead">
-        <span className="gittitle">
-          {status == null
-            ? "Git"
-            : !status.repo
-              ? "Not a git repo"
-              : `${status.branch || "HEAD"}${changes > 0 ? ` · ${changes} change${changes === 1 ? "" : "s"}` : " · clean"}`}
-        </span>
-        <span className="spacer" />
-        <button className="mini" onClick={onRefresh} disabled={loading} title="Refresh git status">
-          {loading ? "…" : "Refresh"}
-        </button>
-      </div>
-      {status?.repo && (
-        <p className="gitsub" title={status.root || workspace}>
-          {(status.root || workspace || "").split("/").filter(Boolean).pop() || status.root || workspace}
-          {status.upstream ? ` → ${status.upstream}` : ""}
-          {(status.ahead || 0) > 0 ? ` · ↑${status.ahead}` : ""}
-          {(status.behind || 0) > 0 ? ` · ↓${status.behind}` : ""}
-        </p>
-      )}
-      {status != null && !status.repo && <p className="hint gitnote">This workspace folder is not a git repository.</p>}
-      {status?.repo && changes > 0 && (
-        <div className="gitfiles">
-          {(status.files || []).map((f) => (
-            <div key={f.path} className="gitfile" title={f.path}>
-              <span className={`gitcode${f.untracked ? " new" : f.staged ? " st" : ""}`}>{f.untracked ? "?" : f.code.trim() || "·"}</span>
-              <span className="gitpath">{f.path}</span>
-            </div>
-          ))}
-          {status.truncated && <p className="hint gitnote">Showing first {(status.files || []).length} of {changes} files.</p>}
-          <p className="hint gitnote">
-            {(status.staged || 0) > 0 ? `${status.staged} staged · ` : ""}
-            {(status.unstaged || 0) > 0 ? `${status.unstaged} modified · ` : ""}
-            {(status.untracked || 0) > 0 ? `${status.untracked} untracked` : ""}
-          </p>
-        </div>
-      )}
-      {status?.repo && changes === 0 && <p className="hint gitnote">Working tree clean.</p>}
-      {note && <p className={note.startsWith("✓") ? "gitok" : "err"}>{note}</p>}
-      {status?.repo && (
-        <>
-          <textarea
-            className="feedback gitmsg"
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            placeholder="Commit message…"
-            rows={2}
-          />
-          <div className="row gitrow">
-            <button
-              className="primary gitbtn"
-              disabled={busyAny || !message.trim() || changes === 0}
-              onClick={() => {
-                onCommit(message.trim(), false);
-                setMessage("");
-              }}
-            >
-              {busyAction === "commit" ? "Committing…" : "Commit"}
-            </button>
-            <button
-              className="primary gitbtn"
-              disabled={busyAny || !message.trim() || changes === 0}
-              onClick={() => {
-                onCommit(message.trim(), true);
-                setMessage("");
-              }}
-              title="Stage everything, commit, and push (sets upstream on first push)"
-            >
-              {busyAction === "commit&push" ? "Pushing…" : "Commit & push"}
-            </button>
-          </div>
-          <div className="row gitrow">
-            <button className="choice" disabled={busyAny} onClick={onPush} title="Push the current branch">
-              {busyAction === "push" ? "Pushing…" : "Push"}
-            </button>
-            <button className="choice" onClick={() => setShowPr((v) => !v)} title="Create a pull request with gh">
-              PR…
-            </button>
-          </div>
-          {showPr && (
-            <div className="gitpr">
-              <input
-                className="feedback"
-                value={prTitle}
-                onChange={(e) => setPrTitle(e.target.value)}
-                placeholder="PR title (required)"
-              />
-              <textarea
-                className="feedback gitmsg"
-                value={prBody}
-                onChange={(e) => setPrBody(e.target.value)}
-                placeholder="PR description (optional)"
-                rows={2}
-              />
-              <p className="hint gitnote">Requires a clean tree and the `gh` CLI on the server.</p>
-              <div className="row gitrow">
-                <button
-                  className="primary gitbtn"
-                  disabled={busyAny || !prTitle.trim()}
-                  onClick={() => {
-                    onPr(prTitle.trim(), prBody);
-                    setPrTitle("");
-                    setPrBody("");
-                  }}
-                >
-                  {busyAction === "pr" ? "Creating…" : "Create PR"}
-                </button>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-function JsonOut({ value }: { value: unknown }) {
-  if (value == null) return null;
-  return <pre className="tbody out">{JSON.stringify(value, null, 2).slice(0, 8000)}</pre>;
-}
-
-function thinkingLabel(entry: Item): string {
-  switch (entry.kind) {
-    case "reasoning":
-      return "Thinking";
-    case "toolCall":
-      return entry.tool || "Tool";
-    case "userShell":
-      return "Shell";
-    case "subagent":
-      return "Subagent";
-    case "workflow":
-      return "Workflow";
-    case "reminderChild":
-      return "Reminder";
-    case "compaction":
-      return "Compacted";
-    default:
-      return entry.kind || "Activity";
-  }
-}
-
-function thinkingDetail(entry: Item): string {
-  if (entry.kind === "reasoning") {
-    const parts = (entry.summary || []).filter((s) => s && s.trim());
-    if (parts.length > 0) return parts.join("\n\n");
-    return entry.text || "";
-  }
-  if (entry.kind === "toolCall") {
-    const cmd = parseArgs(entry.args);
-    const out = (entry.visibleOutput || "").trim();
-    return [cmd, out].filter(Boolean).join(out && cmd ? "\n" : "");
-  }
-  if (entry.kind === "userShell") return entry.visibleOutput || entry.text || "";
-  if (entry.kind === "subagent") return entry.text || entry.fallbackText || "";
-  const text = (entry.text || "").trim();
-  return text || genericRowText(entry);
-}
-
-function shortPreview(s: string, n = 140): string {
-  const one = (s || "").replace(/\s+/g, " ").trim();
-  return one.length > n ? `${one.slice(0, n - 1)}…` : one;
-}
-
-// One collapsible block per run of intermediate activity. The header always
-// shows a single live line (the latest step, swapped in place with a soft
-// fade); the full step history mounts once and only opens on click, so
-// streaming deltas never remount or re-animate the container.
-export function ThinkingBlock({
-  entries,
-  streamingId,
-  defaultOpen,
-}: {
-  entries: Item[];
-  streamingId: string | null;
-  defaultOpen?: boolean;
-}) {
-  const [expanded, setExpanded] = useState(defaultOpen ?? false);
-  const live = thinkingLive(entries, streamingId);
-  const [elapsed, setElapsed] = useState(0);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const seenCount = useRef(entries.length);
-
-  useEffect(() => {
-    if (!live) return;
-    const t0 = Date.now();
-    setElapsed(0);
-    const t = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
-    return () => clearInterval(t);
-  }, [live]);
-
-  // Follow the newest step inside the expanded list only.
-  useEffect(() => {
-    const el = bodyRef.current;
-    if (!expanded || !el || entries.length === seenCount.current) return;
-    seenCount.current = entries.length;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [entries.length, expanded]);
-
-  const latest = entries[entries.length - 1];
-  const preview = latest ? shortPreview(thinkingDetail(latest)) : "";
-  return (
-    <div className={`think${live ? " live" : ""}${expanded ? " open" : ""}`}>
-      <button className="thinkhead" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}>
-        {live ? <span className="thinkspin on" aria-hidden /> : <span className="thinkdone" aria-hidden>✓</span>}
-        <span className="thinkstack">
-          <span className="thinktopline">
-            <span className="thinktitle">{live ? "Thinking" : "Thought"}</span>
-            {live && elapsed > 0 && (
-              <span className="thinkelapsed" aria-hidden>
-                {elapsed}s
-              </span>
-            )}
-            <span className="thinkcount" aria-hidden>
-              {entries.length} step{entries.length === 1 ? "" : "s"}
-            </span>
-          </span>
-          {preview && (
-            <span
-              key={live ? latest.itemId : `done-${entries.length}`}
-              className={`thinkpreview${live ? "" : " settled"}`}
-              title={preview}
-            >
-              {preview}
-            </span>
-          )}
-        </span>
-        <span className="thinkchev" aria-hidden>
-          ▸
-        </span>
-      </button>
-      <div className={`thinkwrap${expanded ? " open" : ""}`}>
-        <div ref={bodyRef} className="thinkbody">
-          {entries.map((entry, i) => {
-            const active = streamingId === entry.itemId || entry.status === "inProgress";
-            const isTool = entry.kind === "toolCall";
-            const cmd = isTool ? parseArgs(entry.args) : "";
-            const out = isTool ? (entry.visibleOutput || "").trim() : "";
-            return (
-              <div key={entry.itemId} className={`thinkrow${active ? " active" : ""}`}>
-                <span className="thinkstep" aria-hidden>
-                  {String(i + 1).padStart(2, "0")}
-                </span>
-                <div className="thinkmain">
-                  <div className="thinklabel">{thinkingLabel(entry)}</div>
-                  {isTool ? (
-                    <>
-                      {cmd && <pre className="thinkcmd">{cmd}</pre>}
-                      {out && <pre className="thinktext">{out}</pre>}
-                      {!cmd && !out && thinkingDetail(entry) && <pre className="thinktext">{thinkingDetail(entry)}</pre>}
-                    </>
-                  ) : (
-                    thinkingDetail(entry) && <pre className="thinktext">{thinkingDetail(entry)}</pre>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SelfUpdate() {
-  const [repo, setRepo] = useStored("openmuse.repo", "");
-  const [st, setSt] = useState<any>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [polling, setPolling] = useState(false);
-  const [starting, setStarting] = useState(false);
-
-  useEffect(() => {
-    ops.devUpdateStatus().then(setSt).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!polling) return;
-    const t = setInterval(async () => {
-      try {
-        const s = await ops.devUpdateStatus();
-        setSt(s);
-        if (s.phase === "done" || s.phase === "failed") setPolling(false);
-      } catch {
-        // Connection lost mid-update: the old app likely just quit for the
-        // swap. Stop polling and say so instead of spinning forever.
-        setPolling(false);
-        setSt((prev: any) => ({ ...(prev || {}), phase: "restarting", ok: false }));
-      }
-    }, 2000);
-    return () => clearInterval(t);
-  }, [polling]);
-
-  async function start() {
-    if (
-      !window.confirm(
-        "Rebuild the desktop app from the local repo, replace /Applications/OpenMuse.app, and relaunch? The app will quit itself once the build finishes.",
-      )
-    ) {
-      return;
-    }
-    setErr(null);
-    setStarting(true);
-    try {
-      const r = await ops.devUpdate(repo || undefined);
-      setSt(r);
-      setPolling(true);
-    } catch (e: any) {
-      setErr(e.message);
-    } finally {
-      setStarting(false);
+  for (const s of sessions) {
+    const time = s.updatedAt ? new Date(s.updatedAt).getTime() : 0;
+    if (time >= todayStart) {
+      groups[0].sessions.push(s);
+    } else if (time >= yesterdayStart) {
+      groups[1].sessions.push(s);
+    } else if (time >= last7DaysStart) {
+      groups[2].sessions.push(s);
+    } else {
+      groups[3].sessions.push(s);
     }
   }
 
-  const phase = st?.phase || "idle";
-  const running = polling || starting || (phase !== "idle" && phase !== "done" && phase !== "failed" && phase !== "restarting" && st?.started !== false);
-  return (
-    <div>
-      <div className="row">
-        <input
-          className="feedback"
-          value={repo}
-          onChange={(e) => setRepo(e.target.value)}
-          placeholder="Repo checkout path (blank = auto-detect)"
-          title="openmuse.repo"
-          spellCheck={false}
-        />
-        <button className="primary" onClick={start} disabled={starting}>
-          {starting ? "Starting…" : "Update app"}
-        </button>
-      </div>
-      {err && <p className="err">{err}</p>}
-      {(st || polling) && (
-        <p className="hint">
-          Status: {phase}
-          {st?.repo ? ` · ${st.repo}` : ""}
-          {phase === "restarting" ? " — connection lost, the app is likely relaunching now." : ""}
-          {phase === "done" ? ` — ${st?.note || "finished"}` : ""}
-          {st?.error ? ` — ${st.error}` : ""}
-          {running && phase !== "restarting" ? " (build takes a few minutes; the app quits itself at the end)" : ""}
-        </p>
-      )}
-      {!!st?.logTail && <pre className="tbody out">{String(st.logTail).slice(-4000)}</pre>}
-    </div>
-  );
-}
-
-type SettingSpec =
-  | { key: string; label: string; kind: "text" }
-  | { key: string; label: string; kind: "select"; options: string[]; emptyLabel: string }
-  | { key: string; label: string; kind: "toggle" }
-  | { key: string; label: string; kind: "flag" }
-  | { key: string; label: string; kind: "number"; min?: number; integer?: boolean };
-
-// Typed controls mirror the `muse` startup-arg allowlists. Selects constrain
-// values by construction; free text remains only where the value is genuinely
-// open-ended (paths, URLs, ids, JSON, multi-flag lists).
-const SETTING_FIELDS: SettingSpec[] = [
-  { key: "openmuse.provider", label: "provider", kind: "select", options: ["echo", "meta"], emptyLabel: "(default)" },
-  { key: "openmuse.preset", label: "preset", kind: "select", options: ["native-basic", "miniswe"], emptyLabel: "(default)" },
-  { key: "openmuse.model", label: "model id", kind: "text" },
-  { key: "openmuse.effort", label: "reasoning effort", kind: "select", options: ["none", "minimal", "low", "medium", "high", "xhigh", "ultra"], emptyLabel: "Auto" },
-  { key: "openmuse.baseUrl", label: "provider base URL", kind: "text" },
-  { key: "openmuse.image", label: "image path (repeatable; comma-separated)", kind: "text" },
-  { key: "openmuse.workspace", label: "workspace path", kind: "text" },
-  { key: "openmuse.worktree", label: "worktree", kind: "select", options: ["off", "create", "existing"], emptyLabel: "(default)" },
-  { key: "openmuse.worktreeBase", label: "worktree base ref", kind: "text" },
-  { key: "openmuse.worktreeExisting", label: "existing worktree path", kind: "text" },
-  { key: "openmuse.parallelCalls", label: "parallel tool calls", kind: "toggle" },
-  { key: "openmuse.compaction", label: "compaction strategy id", kind: "text" },
-  { key: "openmuse.compactionSoft", label: "compaction soft threshold", kind: "number", min: 0, integer: true },
-  { key: "openmuse.compactionHard", label: "compaction hard threshold", kind: "number", min: 0, integer: true },
-  { key: "openmuse.maxSteps", label: "max model steps", kind: "number", min: 1, integer: true },
-  { key: "openmuse.maxToolBytes", label: "max tool output bytes", kind: "number", min: 1, integer: true },
-  { key: "openmuse.sessionId", label: "session id (fixed)", kind: "text" },
-  { key: "openmuse.permissionProfile", label: "permission profile id", kind: "text" },
-  { key: "openmuse.approvalJudge", label: "approval judge", kind: "toggle" },
-  { key: "openmuse.sandboxNetwork", label: "sandbox network", kind: "select", options: ["restricted", "enabled", "proxy-only"], emptyLabel: "(default)" },
-  { key: "openmuse.safety", label: "safety flags shown (yolo|trust-workspace|disable-approval|disable-sandbox|disable-write|disable-shell)", kind: "text" },
-  { key: "openmuse.noSessionLog", label: "no session log", kind: "flag" },
-  { key: "openmuse.agents", label: "ephemeral agent-definition overlay (JSON)", kind: "text" },
-  { key: "openmuse.echoDelay", label: "echo delay ms", kind: "number", min: 0, integer: true },
-  { key: "openmuse.subagentIsolation", label: "subagent worktree isolation", kind: "flag" },
-  { key: "openmuse.disableWeb", label: "disable web tools", kind: "flag" },
-  { key: "openmuse.noForeignCtx", label: "exclude foreign personal context", kind: "flag" },
-];
-
-function SettingsPanel() {
-  return (
-    <div className="thread">
-      <div className="msg agent">
-        <div className="who">Settings (mirrors `muse` startup args)</div>
-        <p className="hint">Stored locally and applied to new sessions and exec runs. Dangerous flags are shown per workspace choice.</p>
-        {SETTING_FIELDS.map((f) => (
-          <SettingField key={f.key} spec={f} />
-        ))}
-      </div>
-      <div className="msg agent">
-        <div className="who">Self-update (rebuild this app from local changes)</div>
-        <p className="hint">
-          Rebuilds the desktop bundle from a repo checkout, swaps /Applications/OpenMuse.app, and relaunches. For
-          developing OpenMuse inside OpenMuse.
-        </p>
-        <SelfUpdate />
-      </div>
-    </div>
-  );
-}
-
-function AuthPanel() {
-  const [statusOut, setStatusOut] = useState<unknown>(null);
-  const [actionOut, setActionOut] = useState<unknown>(null);
-  const [key, setKey] = useState("");
-  const [provider, setProvider] = useState("");
-  return (
-    <div>
-      <div className="row">
-        <button className="choice" onClick={() => ops.authStatus().then(setStatusOut).catch((e: Error) => setStatusOut({ error: e.message }))}>Status</button>
-        <button className="choice" onClick={() => ops.authLogout().then(setActionOut).catch((e: Error) => setActionOut({ error: e.message }))}>Logout</button>
-      </div>
-      <div className="row">
-        <input className="feedback" type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="API key (sent via stdin)" />
-        <input className="feedback" value={provider} onChange={(e) => setProvider(e.target.value)} placeholder="provider (optional)" />
-        <button className="choice" onClick={() => ops.authSet(key, provider || undefined).then((r) => { setKey(""); return r; }).then(setActionOut).catch((e: Error) => setActionOut({ error: e.message }))}>Store key</button>
-      </div>
-      <JsonOut value={statusOut} />
-      <JsonOut value={actionOut} />
-    </div>
-  );
-}
-
-function AccountPanel({ model, effort, approvalMode, workspace }: { model: string; effort: string; approvalMode: string; workspace: string }) {
-  const [cfgOut, setCfgOut] = useState<unknown>(null);
-  const [cfgErr, setCfgErr] = useState<string | null>(null);
-  useEffect(() => {
-    ops.configStatus().then(setCfgOut).catch((e: Error) => setCfgErr(e.message));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const provider = localStorage.getItem("openmuse.provider") || "meta (default)";
-  return (
-    <div className="thread">
-      <div className="msg agent">
-        <div className="who">Account profile</div>
-        <p className="hint">Who is OpenMuse acting as, and with what defaults. Keys stay on this machine; login itself happens in your terminal via `muse login`.</p>
-        <pre className="tbody out">{`provider: ${provider}\nmodel: ${model}\neffort: ${effort || "auto"}\napproval: ${approvalMode}\nworkspace: ${workspace || "server default"}`}</pre>
-        <JsonOut value={cfgOut} />
-        {cfgErr && <p className="err">{cfgErr}</p>}
-      </div>
-      <div className="msg agent">
-        <div className="who">Credentials (`muse login` / `logout` / `auth set`)</div>
-        <AuthPanel />
-      </div>
-    </div>
-  );
-}
-
-function SettingField({ spec }: { spec: SettingSpec }) {
-  switch (spec.kind) {
-    case "select":
-      return <SettingSelect storageKey={spec.key} label={spec.label} options={spec.options} emptyLabel={spec.emptyLabel} />;
-    case "toggle":
-      return <SettingToggle storageKey={spec.key} label={spec.label} />;
-    case "flag":
-      return <SettingFlag storageKey={spec.key} label={spec.label} />;
-    case "number":
-      return <SettingNumber storageKey={spec.key} label={spec.label} min={spec.min} integer={spec.integer} />;
-    default:
-      return <SettingRow storageKey={spec.key} label={spec.label} />;
-  }
-}
-
-function SettingRow({ storageKey, label }: { storageKey: string; label: string }) {
-  const [value, setValue] = useStored(storageKey, "");
-  return (
-    <div className="row">
-      <input className="feedback" value={value} onChange={(e) => setValue(e.target.value)} placeholder={label} title={storageKey} />
-    </div>
-  );
-}
-
-function SettingSelect({ storageKey, label, options, emptyLabel }: { storageKey: string; label: string; options: string[]; emptyLabel: string }) {
-  const [value, setValue] = useStored(storageKey, "");
-  // A pre-existing stored typo is never silently kept: surface it and offer reset.
-  const stale = value !== "" && !options.includes(value);
-  return (
-    <div className="row">
-      <span className="hint" title={storageKey}>{label}</span>
-      <select
-        className="pill select"
-        value={stale ? "" : value}
-        onChange={(e) => setValue(e.target.value)}
-        title={storageKey}
-        aria-label={`${label} (${storageKey})`}
-      >
-        <option value="">{emptyLabel}</option>
-        {options.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
-      {stale && <p className="err">Stored value “{value}” is not a valid {label}; pick one or leave {emptyLabel} to clear it.</p>}
-    </div>
-  );
-}
-
-function SettingToggle({ storageKey, label }: { storageKey: string; label: string }) {
-  const [value, setValue] = useStored(storageKey, "");
-  const on = value === "on" || value === "1" || value === "true";
-  return (
-    <div className="row">
-      <label title={storageKey}>
-        <input
-          type="checkbox"
-          checked={on}
-          onChange={(e) => setValue(e.target.checked ? "on" : "off")}
-          aria-label={`${label} (${storageKey})`}
-        />{" "}
-        {label} (on|off)
-      </label>
-    </div>
-  );
-}
-
-function SettingFlag({ storageKey, label }: { storageKey: string; label: string }) {
-  const [value, setValue] = useStored(storageKey, "");
-  const on = value === "1";
-  return (
-    <div className="row">
-      <label title={storageKey}>
-        <input
-          type="checkbox"
-          checked={on}
-          onChange={(e) => setValue(e.target.checked ? "1" : "")}
-          aria-label={`${label} (${storageKey})`}
-        />{" "}
-        {label}
-      </label>
-      {value !== "" && !on && <p className="err">Stored value “{value}” is not valid; uncheck to clear, check to set.</p>}
-    </div>
-  );
-}
-
-function SettingNumber({ storageKey, label, min, integer }: { storageKey: string; label: string; min?: number; integer?: boolean }) {
-  const [value, setValue] = useStored(storageKey, "");
-  let err: string | null = null;
-  if (value !== "") {
-    const n = Number(value);
-    if (!Number.isFinite(n)) err = `${label} must be a number.`;
-    else if (integer && !Number.isInteger(n)) err = `${label} must be a whole number.`;
-    else if (min !== undefined && n < min) err = `${label} must be ≥ ${min}.`;
-  }
-  function clamp() {
-    if (value === "") return;
-    const n = Number(value);
-    if (!Number.isFinite(n)) return;
-    let v = integer ? Math.round(n) : n;
-    if (min !== undefined) v = Math.max(min, v);
-    if (String(v) !== value) setValue(String(v));
-  }
-  return (
-    <div className="row">
-      <input
-        className="feedback"
-        type="number"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={clamp}
-        placeholder={label}
-        title={storageKey}
-        aria-label={`${label} (${storageKey})`}
-        min={min}
-        step={integer ? 1 : "any"}
-      />
-      {err && <p className="err">{err}</p>}
-    </div>
-  );
-}
-
-// Only user/agent messages render as bubbles; every other item kind folds
-// into a per-run thinking block (see threading.ts). Unknown kinds render
-// generically per the MSP spec, so any wire item with an id + kind is kept.
-
-type Tab = "chat" | "settings" | "account";
-
-function useStored(key: string, initial: string) {
-  const [value, setValue] = useState(() => localStorage.getItem(key) || initial);
-  function set(v: string) {
-    setValue(v);
-    if (v) localStorage.setItem(key, v);
-    else localStorage.removeItem(key);
-  }
-  return [value, set] as const;
+  return groups.filter((g) => g.sessions.length > 0);
 }
 
 export default function App() {
@@ -1347,10 +163,12 @@ export default function App() {
   const [browserOpen, setBrowserOpen] = useState(false);
   const [chatFilter, setChatFilter] = useState("");
   const [transcriptFilter, setTranscriptFilter] = useState("");
+
   const daypart = (() => {
     const h = new Date().getHours();
     return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
   })();
+
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [items, setItems] = useState<Item[]>([]);
@@ -1380,6 +198,13 @@ export default function App() {
   const [gitOpen, setGitOpen] = useState(false);
   const [gitAction, setGitAction] = useState<string | null>(null);
   const [gitNote, setGitNote] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
+  const pendingDeltas = useRef<{ itemId: string; field: string; delta: string }[]>([]);
 
   function chooseEffort(e: string) {
     setEffort(e);
@@ -1446,16 +271,11 @@ export default function App() {
     }
   }
 
-  // Poll git status every 10s; refresh immediately when the menu opens or
-  // the workspace changes.
   useEffect(() => {
     refreshGit();
     const t = setInterval(refreshGit, 10000);
     return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace]);
-
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   function removeAttachment(id: string) {
     setAttachments((xs) => xs.filter((a) => a.id !== id));
@@ -1465,13 +285,13 @@ export default function App() {
     const id = `att-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
     if (f.type.startsWith("image/")) {
       if (f.size > 12 * 1024 * 1024) {
-        setError(`${f.name || "Image"}: images over 12MB can't be attached`);
+        setError(`${f.name || "Image"}: images over 12MB cannot be attached`);
         return;
       }
       setAttachments((xs) =>
         xs.length >= 8
           ? xs
-          : [...xs, { id, kind: "image", name: f.name || "pasted image", mime: f.type, size: f.size, ready: false }],
+          : [...xs, { id, kind: "image", name: f.name || "Pasted image", mime: f.type, size: f.size, ready: false }],
       );
       try {
         const dataUrl = await readAsDataURL(f);
@@ -1483,11 +303,11 @@ export default function App() {
           height = bmp.height;
           bmp.close();
         } catch {
-          /* dimensions stay unknown; the host accepts parts without them */
+          /* optional dimensions */
         }
         setAttachments((xs) => xs.map((a) => (a.id === id ? { ...a, dataUrl, width, height, ready: true } : a)));
       } catch {
-        setAttachments((xs) => xs.map((a) => (a.id === id ? { ...a, error: "unreadable" } : a)));
+        setAttachments((xs) => xs.map((a) => (a.id === id ? { ...a, error: "Unreadable" } : a)));
       }
       return;
     }
@@ -1502,20 +322,16 @@ export default function App() {
         const text = await f.text();
         setAttachments((xs) => xs.map((a) => (a.id === id ? { ...a, text, ready: true } : a)));
       } catch {
-        setAttachments((xs) => xs.map((a) => (a.id === id ? { ...a, error: "unreadable" } : a)));
+        setAttachments((xs) => xs.map((a) => (a.id === id ? { ...a, error: "Unreadable" } : a)));
       }
       return;
     }
-    setError(
-      f.type.startsWith("image/")
-        ? `${f.name || "Image"}: images over 12MB can't be attached`
-        : `Can't attach ${f.name || "that file"}: images and text files under 256KB only`,
-    );
+    setError(`Cannot attach ${f.name || "file"}: images and text files under 256KB only.`);
   }
 
   function addFiles(files: File[]) {
     if (attachments.length >= 8) {
-      setError("At most 8 attachments per message");
+      setError("Maximum of 8 attachments per message");
       return;
     }
     setError(null);
@@ -1525,14 +341,14 @@ export default function App() {
   async function attachScreenshot(dataUrl: string, name: string) {
     setError(null);
     if (attachments.length >= 8) {
-      setError("At most 8 attachments per message");
+      setError("Maximum of 8 attachments per message");
       return;
     }
     try {
       const blob = await (await fetch(dataUrl)).blob();
       await ingestFile(new File([blob], name, { type: "image/png" }));
     } catch {
-      setError("Couldn't attach that screenshot");
+      setError("Could not attach screenshot");
     }
   }
 
@@ -1541,7 +357,7 @@ export default function App() {
       .replace(/[*_`#~>|[\]()]/g, "")
       .replace(/\s+/g, " ")
       .trim()
-      .slice(0, 44);
+      .slice(0, 48);
   }
 
   function fmtDate(iso?: string): string {
@@ -1562,10 +378,6 @@ export default function App() {
     return [turns, fmtDate(s.updatedAt)].filter(Boolean).join(" · ");
   }
 
-  // Chat reliability: session list is newest-first by updatedAt (fallback:
-  // keep existing order) and de-duplicated by sessionId. The server emits
-  // session/started twice for mocks (explicit broadcast + host
-  // notification), so every insert path must upsert, never append blindly.
   function sortSessions(xs: Session[]): Session[] {
     return xs.slice().sort((a, b) => {
       const ta = a.updatedAt ? Date.parse(a.updatedAt) : NaN;
@@ -1593,20 +405,9 @@ export default function App() {
       if (t) setTitles((ts) => (ts[sid] ? ts : { ...ts, [sid]: t }));
     }
   }
-  const [error, setError] = useState<string | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const threadRef = useRef<HTMLDivElement>(null);
-  // True while the reader sits at the bottom; streaming deltas must not yank
-  // them back down once they've scrolled up to read.
-  const stickRef = useRef(true);
-  // Deltas that arrive before their item's open event (ephemeral opens have
-  // no durable record yet). Drained into the item when the open arrives.
-  const pendingDeltas = useRef<{ itemId: string; field: string; delta: string }[]>([]);
 
   useEffect(() => {
     if (!stickRef.current) return;
-    // Instant while deltas pour in (queuing a smooth scroll per character is
-    // what made the thread stutter); smooth for settled updates.
     bottomRef.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth", block: "end" });
   }, [items, approvals, prompts, streaming]);
 
@@ -1622,9 +423,6 @@ export default function App() {
       const i = xs.findIndex((x) => x.itemId === it.itemId);
       if (i >= 0) {
         const prev = xs[i];
-        // item/updated + item/completed re-emit the full item at a higher
-        // revision; replace iff higher so out-of-order delivery can't
-        // clobber the final state with a stale revision.
         if (it.revision != null && prev.revision != null && it.revision < prev.revision) return xs;
         const next = xs.slice();
         next[i] = {
@@ -1636,10 +434,6 @@ export default function App() {
         };
         return next;
       }
-      // Host echo of our optimistic message: adopt it instead of doubling.
-      // Exact-text match covers the common case; the fallback adopts the
-      // oldest pending local echo because the host record can differ
-      // (attachment blocks appended, trimming, image-only placeholder).
       if (it.kind === "userMessage") {
         const j = xs.findIndex((x) => x.itemId.startsWith("local-") && x.text === it.text);
         if (j >= 0) {
@@ -1661,20 +455,13 @@ export default function App() {
   const onEvent = useCallback(
     (method: string, p: any) => {
       if (method === "session/started" && p && p.session) {
-        const s = p.session;
-        setSessions((xs) => upsertSessionList(xs, s));
+        setSessions((xs) => upsertSessionList(xs, p.session));
         return;
       }
       if (p.sessionId && sessionId && p.sessionId !== sessionId) return;
       switch (method) {
         case "turn/started":
           setBusy(true);
-          break;
-        case "turn/retryScheduled":
-        case "turn/unqueued":
-        case "view/gap":
-        case "session/goalChanged":
-        case "session/branchChanged":
           break;
         case "approval/updated":
           setApprovals((xs) => {
@@ -1688,11 +475,6 @@ export default function App() {
         case "session/approvalModeChanged":
           if (p.mode) setApprovalMode(p.mode);
           break;
-        case "session/modelChanged":
-          // Leave the picker on the user's own choice ("Auto" unless they
-          // picked a model). Adopting the host-reported name here would
-          // re-pin the selector to a concrete model on its own.
-          break;
         case "item/started":
         case "item/updated":
           upsertItem(p.item);
@@ -1701,15 +483,8 @@ export default function App() {
         case "item/delta": {
           if (!p.itemId || typeof p.delta !== "string") break;
           const field = p.field || "text";
-          // Buffer-or-append decision must read current state without side
-          // effects (StrictMode double-invokes updaters). Check membership
-          // from the last rendered items via a ref-synced lookup instead.
           const known = itemsRef.current.some((it) => it.itemId === p.itemId);
           if (!known) {
-            // Delta before its open event (ephemeral opens have no durable
-            // record yet): buffer it; upsertItem drains it when the item
-            // arrives. Without this the delta would be dropped and the
-            // thinking block would miss streamed reasoning/tool output.
             if (!pendingDeltas.current.some((d) => d.itemId === p.itemId && d.field === field && d.delta === p.delta)) {
               pendingDeltas.current = [...pendingDeltas.current, { itemId: p.itemId, field, delta: p.delta }];
             }
@@ -1781,15 +556,10 @@ export default function App() {
     [sessionId, upsertItem],
   );
 
-  // One shared EventSource for the app lifetime: tearing it down on every
-  // session switch dropped events (and briefly double-delivered them).
-  // Filtering uses the latest handler via ref.
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
   useEffect(() => subscribe((method: string, params: any) => onEventRef.current(method, params), setStatus), []);
 
-  // Resolve real titles for sessions that have none, from each session's
-  // first user message (first view page only; failures keep the fallback).
   const titleTried = useRef<Set<string>>(new Set());
   useEffect(() => {
     const missing = sessions
@@ -1815,7 +585,7 @@ export default function App() {
               if (t) setTitles((ts) => (ts[s.sessionId] ? ts : { ...ts, [s.sessionId]: t }));
             }
           } catch {
-            /* keep the fallback title */
+            /* ignore */
           }
         }
       }
@@ -1859,8 +629,6 @@ export default function App() {
     setCtx(null);
     setBusy(false);
     setStreaming(null);
-    // Resume reliability: deltas buffered for the previous session must not
-    // leak into the next one when the open event arrives late.
     pendingDeltas.current = [];
   }
 
@@ -1888,7 +656,7 @@ export default function App() {
         titleFromItems(mapped, sid);
       }
     } catch {
-      /* resume history (if any) still stands */
+      /* ignore */
     }
   }
 
@@ -1921,7 +689,6 @@ export default function App() {
       const r = await api("/api/session/resume", { method: "POST", body: JSON.stringify({ sessionId: s.sessionId }) });
       setSessionId(s.sessionId);
       resetView();
-      // Resume bumps the session to the top so the list tracks recency.
       setSessions((xs) => upsertSessionList(xs, s));
       applyHistory(r, s.sessionId);
       await loadTranscript(s.sessionId);
@@ -1958,8 +725,6 @@ export default function App() {
       const t = cleanTitle(echoText);
       if (t) setTitles((ts) => ({ ...ts, [sid as string]: t }));
     }
-    // Optimistic echo so the message appears instantly; replaced by the
-    // host's own userMessage record when it arrives (same text).
     const echoId = `local-${Date.now()}`;
     setItems((xs) => [...xs, { itemId: echoId, kind: "userMessage", text: echoText, status: "completed", done: true }]);
     try {
@@ -2075,27 +840,19 @@ export default function App() {
   const liveApprovals = approvals.filter((a) => !a.settled);
   const livePrompts = prompts.filter((q) => !q.settled);
   const ctxPct = ctx ? Math.min(100, Math.round((ctx.used / ctx.window) * 100)) : 0;
-  // Collapse consecutive intermediate items into per-run thinking blocks;
-  // only user/agent messages render as bubbles. Memoized so block identity
-  // (and collapse state) survives unrelated re-renders.
   const blocks = useMemo(() => groupThread(items), [items]);
 
-  // Transcript search: client-side filter over rendered text (no protocol
-  // change). Thinking blocks match when any entry's label/detail matches.
   const needle = transcriptFilter.trim().toLowerCase();
   const visibleBlocks = useMemo(() => {
     if (!needle) return blocks;
     return blocks.filter((b) => {
       if (b.type === "thinking") {
-        return b.entries.some((e) => `${thinkingLabel(e)} ${thinkingDetail(e)}`.toLowerCase().includes(needle));
+        return b.entries.some((e) => `${e.kind} ${e.tool || ""} ${e.text || ""}`.toLowerCase().includes(needle));
       }
       return (b.item.text || "").toLowerCase().includes(needle);
     });
   }, [blocks, needle]);
 
-  // Retry: re-send the last user message text via the existing turn/start
-  // REST endpoint (protocol-supported). Text attachments were already
-  // inlined into that text; images are not re-attached on retry.
   async function retryLast() {
     if (busy || !sessionId) return;
     const last = [...itemsRef.current].reverse().find((w) => w.kind === "userMessage" && w.text.trim());
@@ -2114,23 +871,28 @@ export default function App() {
     }
   }
 
-  // Shortcuts: "/" focuses transcript search, Cmd/Ctrl+K focuses the
-  // composer, Escape clears the search. Skipped inside form fields (except
-  // Escape) so approval/question inputs keep their own keys.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const t = e.target as HTMLElement | null;
       const inField = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT");
       if (e.key === "Escape") {
-        if (document.activeElement && (document.activeElement.id === "transcript-search")) {
+        if (document.activeElement && document.activeElement.id === "transcript-search") {
           setTranscriptFilter("");
           (document.activeElement as HTMLElement).blur();
         }
+        setGitOpen(false);
+        setMenuOpen(false);
         return;
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         document.getElementById("composer-input")?.focus();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        setTab("chat");
+        newSession();
         return;
       }
       if (inField || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -2143,348 +905,529 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [sessionId]);
 
+  const sessionGroups = useMemo(() => {
+    const filtered = sortSessions(sessions).filter((s) =>
+      titleFor(s).toLowerCase().includes(chatFilter.toLowerCase()),
+    );
+    return groupSessionsByDate(filtered);
+  }, [sessions, titles, chatFilter]);
+
+  const activeSessionObj = sessions.find((s) => s.sessionId === sessionId);
+
   return (
-    <div className="shell">
-      <aside className="side">
-        <div className="brand">
-          <span className="mark" aria-hidden>
-            M
-          </span>
-          OpenMuse
+    <div className="app-shell">
+      {/* ----------------- Left Sidebar ----------------- */}
+      <aside className="app-sidebar">
+        <div className="sidebar-header-drag">
+          <div className="app-brand">
+            <span className="brand-icon-mark" aria-hidden>
+              M
+            </span>
+            <span className="brand-name">OpenMuse</span>
+            <span className="brand-version-tag">v0.1</span>
+          </div>
         </div>
-        <button className="newbtn" onClick={() => { setTab("chat"); newSession(); }}>
-          <span aria-hidden>+</span> New chat
-        </button>
-        <nav className="sess chats">
-          <div className="sess-h">Chats</div>
-          <input
-            className="chatfilter"
-            value={chatFilter}
-            onChange={(e) => setChatFilter(e.target.value)}
-            placeholder="Search chats…"
-          />
-          {sortSessions(sessions)
-            .filter((s) => titleFor(s).toLowerCase().includes(chatFilter.toLowerCase()))
-            .map((s) => (
-              <button
-                key={s.sessionId}
-                className={s.sessionId === sessionId ? "active chatrow" : "chatrow"}
-                onClick={() => { setTab("chat"); openSession(s); }}
-                title={s.sessionId}
-              >
-                <span className="ct">{titleFor(s)}</span>
-                {metaFor(s) && <span className="cd">{metaFor(s)}</span>}
-              </button>
-            ))}
-          {sessions.length === 0 && <p className="hint">No chats yet — start one.</p>}
-        </nav>
-        {todos.length > 0 && (
-          <div className="todos">
-            <div className="todos-h">Tasks</div>
-            {todos.map((t, i) => (
-              <div key={i} className="todo" data-st={t.status}>
-                <span className="box" aria-hidden />
-                {t.text}
-              </div>
-            ))}
-          </div>
-        )}
-        {usage && (
-          <div className="usage">
-            {usage.inTok} in · {usage.outTok} out{usage.model ? ` · ${usage.model}` : ""}
-          </div>
-        )}
-        <div className="profile">
-          <button className="profilebtn" onClick={() => setMenuOpen((v) => !v)}>
-            <span className="avatar" aria-hidden>
-              O
-            </span>
-            <span className="pmeta">
-              <span className="pname">Local</span>
-              <span className="pplan">{model}</span>
-            </span>
+
+        <div className="sidebar-actions-area">
+          <button
+            type="button"
+            className="btn-new-chat"
+            onClick={() => {
+              setTab("chat");
+              newSession();
+            }}
+          >
+            <div className="btn-new-chat-left">
+              <PlusIcon size={16} />
+              <span>New chat</span>
+            </div>
+            <span className="btn-new-chat-shortcut">⌘N</span>
           </button>
-          {menuOpen && (
-            <>
-              <div className="menuveil" onClick={() => setMenuOpen(false)} />
-              <div className="menu">
-                <button onClick={() => { setTab("account"); setMenuOpen(false); }}>Account</button>
-                <button onClick={() => { setTab("settings"); setMenuOpen(false); }}>Settings</button>
-                {sessionId && <button onClick={() => { exportChat(); setMenuOpen(false); }}>Export chat</button>}
+
+          <div className="sidebar-search-box">
+            <SearchIcon size={14} className="sidebar-search-icon" />
+            <input
+              className="sidebar-search-input"
+              value={chatFilter}
+              onChange={(e) => setChatFilter(e.target.value)}
+              placeholder="Search chats..."
+            />
+          </div>
+        </div>
+
+        {/* Temporal Session List */}
+        <div className="sidebar-sessions-scroll">
+          {sessionGroups.map((group) => (
+            <div key={group.label} className="session-group">
+              <span className="session-group-label">{group.label}</span>
+              {group.sessions.map((s) => (
                 <button
-                  onClick={async () => {
-                    setError(null);
-                    try {
-                      await ops.authLogout();
-                    } catch (e: any) {
-                      setError(e.message);
-                    }
-                    setMenuOpen(false);
+                  key={s.sessionId}
+                  type="button"
+                  className={`session-row-item ${s.sessionId === sessionId && tab === "chat" ? "active" : ""}`}
+                  onClick={() => {
+                    setTab("chat");
+                    openSession(s);
                   }}
+                  title={s.sessionId}
                 >
-                  Log out
+                  <div className="session-row-info">
+                    <span className="session-row-title">{titleFor(s)}</span>
+                    {metaFor(s) && <span className="session-row-meta">{metaFor(s)}</span>}
+                  </div>
                 </button>
+              ))}
+            </div>
+          ))}
+
+          {sessions.length === 0 && (
+            <p className="session-empty-hint">No chats yet. Start a new conversation.</p>
+          )}
+        </div>
+
+        {/* Sidebar Footer */}
+        <div className="sidebar-footer">
+          {usage && (
+            <div className="sidebar-usage-pill">
+              <span>Tokens: {usage.inTok.toLocaleString()} in</span>
+              <span>{usage.outTok.toLocaleString()} out</span>
+            </div>
+          )}
+
+          <div className="popover-anchor">
+            <button
+              type="button"
+              className="sidebar-profile-btn"
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              <div className="profile-avatar-circle">
+                <UserIcon size={16} />
               </div>
+              <div className="profile-text-meta">
+                <span className="profile-user-name">Muse Agent</span>
+                <span className="profile-active-model">{model}</span>
+              </div>
+            </button>
+
+            {menuOpen && (
+              <>
+                <div className="modal-backdrop-transparent" onClick={() => setMenuOpen(false)} />
+                <div className="profile-menu-popover">
+                  <button
+                    type="button"
+                    className="menu-item-btn"
+                    onClick={() => {
+                      setTab("account");
+                      setMenuOpen(false);
+                    }}
+                  >
+                    <UserIcon size={14} />
+                    <span>Account Profile</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="menu-item-btn"
+                    onClick={() => {
+                      setTab("settings");
+                      setMenuOpen(false);
+                    }}
+                  >
+                    <SettingsIcon size={14} />
+                    <span>Preferences</span>
+                  </button>
+                  {sessionId && (
+                    <button
+                      type="button"
+                      className="menu-item-btn"
+                      onClick={() => {
+                        exportChat();
+                        setMenuOpen(false);
+                      }}
+                    >
+                      <DownloadIcon size={14} />
+                      <span>Export Chat JSON</span>
+                    </button>
+                  )}
+                  <div className="menu-divider-line" />
+                  <button
+                    type="button"
+                    className="menu-item-btn danger"
+                    onClick={async () => {
+                      setError(null);
+                      try {
+                        await ops.authLogout();
+                      } catch (e: any) {
+                        setError(e.message);
+                      }
+                      setMenuOpen(false);
+                    }}
+                  >
+                    <span>Log Out</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </aside>
+
+      {/* ----------------- Main Work Area ----------------- */}
+      <div className="app-main-pane">
+        <div className="main-content-flow">
+          {/* Top Bar Header */}
+          <header className="topbar-container">
+            <div className="topbar-left">
+              <span className={`connection-status-pill ${status.connected ? "connected" : ""}`}>
+                <span className="status-dot" aria-hidden />
+                <span>{status.mock ? "demo host" : status.connected ? "muse connected" : "muse unreachable"}</span>
+              </span>
+
+              {tab === "chat" && activeSessionObj && (
+                <div className="topbar-title-meta">
+                  <span>{titleFor(activeSessionObj)}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="topbar-right">
+              {/* Git Status Widget */}
+              <div className="popover-anchor">
+                <button
+                  type="button"
+                  className={`topbar-btn ${gitOpen ? "active" : ""} ${git && git.repo && gitChanges > 0 ? "git-dirty" : ""}`}
+                  onClick={() => {
+                    setGitOpen((v) => !v);
+                    if (!gitOpen) refreshGit();
+                  }}
+                  title={git?.repo ? `${gitChanges} uncommitted changes on ${git.branch || "?"}` : "Git operations"}
+                >
+                  <GitBranchIcon size={14} />
+                  <span>{git?.repo ? `${git.branch || "HEAD"}${gitChanges > 0 ? ` (${gitChanges})` : ""}` : "Git"}</span>
+                </button>
+
+                {gitOpen && (
+                  <>
+                    <div className="modal-backdrop-transparent" onClick={() => setGitOpen(false)} />
+                    <GitMenu
+                      status={git}
+                      loading={gitLoading}
+                      workspace={workspace}
+                      onRefresh={refreshGit}
+                      onCommit={gitCommit}
+                      onPush={gitPush}
+                      onPr={gitCreatePr}
+                      busyAction={gitAction}
+                      note={gitNote}
+                    />
+                  </>
+                )}
+              </div>
+
+              {/* Chat Session Operations */}
+              {tab === "chat" && sessionId && (
+                <>
+                  <button
+                    type="button"
+                    className="topbar-btn"
+                    onClick={retryLast}
+                    disabled={busy || !sessionId}
+                    title="Retry last user prompt"
+                  >
+                    <RefreshCwIcon size={12} />
+                    <span>Retry</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="topbar-btn"
+                    onClick={async () => {
+                      if (!sessionId) return;
+                      setError(null);
+                      try {
+                        const r = await ops.fork(sessionId);
+                        const f = r.session;
+                        if (f) setSessions((xs) => upsertSessionList(xs, f));
+                      } catch (e: any) {
+                        setError(e.message);
+                      }
+                    }}
+                    title="Fork conversation to explore an alternative branch"
+                  >
+                    <GitForkIcon size={13} />
+                    <span>Fork</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="topbar-btn"
+                    onClick={async () => {
+                      if (!sessionId) return;
+                      setError(null);
+                      try {
+                        await ops.compact(sessionId);
+                      } catch (e: any) {
+                        setError(e.message);
+                      }
+                    }}
+                    title="Compact conversation history to conserve token context"
+                  >
+                    <Minimize2Icon size={13} />
+                    <span>Compact</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="topbar-btn"
+                    onClick={exportChat}
+                    title="Export session data as JSON"
+                  >
+                    <DownloadIcon size={13} />
+                    <span>Export</span>
+                  </button>
+                </>
+              )}
+
+              {/* In-app Browser Inspector Toggle */}
+              <button
+                type="button"
+                className={`topbar-btn ${browserOpen ? "active" : ""}`}
+                onClick={() => setBrowserOpen((v) => !v)}
+                title="Toggle Web Preview Pane"
+              >
+                <GlobeIcon size={14} />
+                <span>{browserOpen ? "Hide Browser" : "Browser"}</span>
+              </button>
+            </div>
+
+            {/* Context Token Usage Strip */}
+            {ctx && (
+              <div className="context-meter-strip" title={`${ctx.used} / ${ctx.window} tokens used`}>
+                <div className="context-meter-fill" style={{ width: `${ctxPct}%` }} />
+              </div>
+            )}
+          </header>
+
+          {/* ----------------- Active View Content ----------------- */}
+          {tab === "settings" ? (
+            <SettingsView onClose={() => setTab("chat")} />
+          ) : tab === "account" ? (
+            <AccountView
+              model={model}
+              effort={effort}
+              approvalMode={approvalMode}
+              workspace={workspace}
+              onClose={() => setTab("chat")}
+            />
+          ) : !sessionId ? (
+            /* Hero / Empty State Screen */
+            <div className="hero-empty-container">
+              <div className="hero-brand-mark" aria-hidden>
+                M
+              </div>
+              <h1 className="hero-heading">{daypart}</h1>
+              <p className="hero-subheading">
+                How can Muse help you engineer software today? Ask architectural questions, write code, or review diffs.
+              </p>
+
+              <div className="hero-starter-grid">
+                <div
+                  className="hero-starter-card"
+                  onClick={() => send("Explain this codebase to me: what does it do and where should I start?")}
+                >
+                  <div className="card-icon-pill">
+                    <CodeIcon size={16} />
+                  </div>
+                  <span className="starter-card-title">Explore Codebase</span>
+                  <span className="starter-card-desc">Map architecture and trace entrypoints.</span>
+                </div>
+
+                <div
+                  className="hero-starter-card"
+                  onClick={() => send("Write a small clean utility script that demonstrates this project's core functionality.")}
+                >
+                  <div className="card-icon-pill">
+                    <SparklesIcon size={16} />
+                  </div>
+                  <span className="starter-card-title">Prototype a Script</span>
+                  <span className="starter-card-desc">From concept to executed code in one turn.</span>
+                </div>
+
+                <div
+                  className="hero-starter-card"
+                  onClick={() => send("Review my latest git changes and suggest architectural improvements or bug fixes.")}
+                >
+                  <div className="card-icon-pill">
+                    <GitBranchIcon size={16} />
+                  </div>
+                  <span className="starter-card-title">Review Git Diff</span>
+                  <span className="starter-card-desc">Thorough code review and verification.</span>
+                </div>
+              </div>
+
+              {status.lastError && <div className="modal-error-alert">{status.lastError}</div>}
+              {error && <div className="modal-error-alert">{error}</div>}
+
+              <div className="hero-composer-dock">
+                <Composer
+                  input={input}
+                  setInput={setInput}
+                  busy={false}
+                  models={models}
+                  model={model}
+                  onModel={setModel}
+                  effort={effort}
+                  onEffort={chooseEffort}
+                  approvalMode={approvalMode}
+                  onApproval={setApprovalMode}
+                  folderName={folderName}
+                  folderPath={workspace}
+                  onPickFolder={() => setPicking(true)}
+                  onSend={() => send()}
+                  onStop={stop}
+                  attachments={attachments}
+                  onAddFiles={addFiles}
+                  onRemoveAttachment={removeAttachment}
+                />
+              </div>
+
+              {picking && (
+                <WorkspacePicker initial={workspace} onPick={chooseWorkspace} onClose={() => setPicking(false)} />
+              )}
+            </div>
+          ) : (
+            /* Conversation Thread Screen */
+            <>
+              <div
+                ref={threadRef}
+                className="conversation-thread-scroll"
+                aria-live="polite"
+                onScroll={(e) => {
+                  const el = e.currentTarget;
+                  stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+                }}
+              >
+                {/* Transcript Filter Search Bar */}
+                <div className="transcript-filter-bar">
+                  <SearchIcon size={13} className="sidebar-search-icon" />
+                  <input
+                    id="transcript-search"
+                    className="transcript-filter-input"
+                    value={transcriptFilter}
+                    onChange={(e) => setTranscriptFilter(e.target.value)}
+                    placeholder="Filter messages and tool calls in this session... ( / to focus )"
+                  />
+                  {needle && (
+                    <>
+                      <span className="filter-match-count">
+                        {visibleBlocks.length} of {blocks.length} shown
+                      </span>
+                      <button
+                        type="button"
+                        className="filter-clear-btn"
+                        onClick={() => setTranscriptFilter("")}
+                      >
+                        Clear
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                {visibleBlocks.map((b) =>
+                  b.type === "thinking" ? (
+                    <ThinkingBlock key={b.key} entries={b.entries} streamingId={streaming} />
+                  ) : (
+                    <div
+                      key={b.item.itemId}
+                      className={`chat-message-row ${b.type === "user" ? "user-message" : "agent-message"}`}
+                    >
+                      <div className="message-author-header">
+                        {b.type === "agent" && (
+                          <div className="agent-avatar-small" aria-hidden>
+                            M
+                          </div>
+                        )}
+                        <span>{b.type === "user" ? "You" : "Muse"}</span>
+                      </div>
+
+                      {b.type === "user" ? (
+                        <div className="user-bubble-box">
+                          {b.item.text}
+                        </div>
+                      ) : (
+                        <div className="agent-response-box">
+                          <Markdown text={b.item.text || (b.item.done ? "" : "...")} />
+                        </div>
+                      )}
+                    </div>
+                  ),
+                )}
+
+                {/* Live Tool Approvals */}
+                {liveApprovals.map((a) => (
+                  <ApprovalCard key={a.approvalId} a={a} onDecide={decide} />
+                ))}
+
+                {/* Live Questions */}
+                {livePrompts.map((q) => (
+                  <QuestionCard
+                    key={q.userInputId}
+                    q={q}
+                    onAnswer={(ans) => answerPrompt(q, ans)}
+                    onCancel={() => cancelPrompt(q)}
+                  />
+                ))}
+
+                {/* Thinking Dots Indicator */}
+                {busy && !streaming && liveApprovals.length === 0 && livePrompts.length === 0 && (
+                  <div className="agent-thinking-dots" aria-label="Muse is thinking">
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                )}
+
+                <div ref={bottomRef} />
+              </div>
+
+              {error && <div className="modal-error-alert">{error}</div>}
+
+              {/* Bottom Floating Composer */}
+              <div className="composer-dock-container">
+                <Composer
+                  input={input}
+                  setInput={setInput}
+                  busy={busy}
+                  models={models}
+                  model={model}
+                  onModel={changeModel}
+                  effort={effort}
+                  onEffort={chooseEffort}
+                  approvalMode={approvalMode}
+                  onApproval={changeApprovalMode}
+                  folderName={folderName}
+                  folderPath={workspace}
+                  onPickFolder={() => setPicking(true)}
+                  onSend={() => send()}
+                  onStop={stop}
+                  attachments={attachments}
+                  onAddFiles={addFiles}
+                  onRemoveAttachment={removeAttachment}
+                />
+              </div>
+
+              {picking && (
+                <WorkspacePicker initial={workspace} onPick={chooseWorkspace} onClose={() => setPicking(false)} />
+              )}
             </>
           )}
         </div>
-      </aside>
-      <div className="work">
-      <main className={`main tab-${tab}`}>
-        <div className="topbar">
-          <div className="topgroup">
-            <span className="statuspill" data-ok={status.connected}>
-              {status.mock ? "demo host" : status.connected ? "muse connected" : "muse unreachable"}
-            </span>
-            <button
-              className={`mini gitbtn${git && git.repo && gitChanges > 0 ? " dirty" : ""}`}
-              onClick={() => {
-                setGitOpen((v) => !v);
-                if (!gitOpen) refreshGit();
-              }}
-              title={git && git.repo ? `${gitChanges} uncommitted change${gitChanges === 1 ? "" : "s"} on ${git.branch || "?"}` : "Git actions: commit, push, PR"}
-            >
-              <span className="gitdot" aria-hidden />
-              {git?.repo ? `${git.branch || "?"}${gitChanges > 0 ? ` · ${gitChanges}` : ""}` : "Git"}
-            </button>
+
+        {/* ----------------- In-App Browser Panel ----------------- */}
+        {browserOpen && (
+          <div className="browser-pane-wrapper">
+            <BrowserPanel onAttach={attachScreenshot} onClose={() => setBrowserOpen(false)} />
           </div>
-          <button
-            className="mini bbrowser"
-            onClick={() => setBrowserOpen((v) => !v)}
-            title="Open a browser pane on the right to view any URL and screenshot it"
-          >
-            {browserOpen ? "Hide browser" : "Browser"}
-          </button>
-        </div>
-        {gitOpen && (
-          <>
-            <div className="menuveil" onClick={() => setGitOpen(false)} />
-            <div className="gitpop">
-              <GitMenu
-                status={git}
-                loading={gitLoading}
-                workspace={workspace}
-                onRefresh={refreshGit}
-                onCommit={gitCommit}
-                onPush={gitPush}
-                onPr={gitCreatePr}
-                busyAction={gitAction}
-                note={gitNote}
-              />
-            </div>
-          </>
         )}
-        {tab === "settings" ? (
-          <SettingsPanel />
-        ) : tab === "account" ? (
-          <AccountPanel model={model} effort={effort} approvalMode={approvalMode} workspace={workspace} />
-        ) : !sessionId ? (
-          <div className="empty">
-            <h1>{daypart}</h1>
-            <p>How can Muse help?</p>
-            <div className="chips">
-              <button onClick={() => send("Explain this codebase to me: what does it do and where do I start?")}>
-                <span className="cdot" aria-hidden />
-                <span className="ctitle">Explain a codebase</span>
-                <span className="csub">Map the architecture and find where to start.</span>
-              </button>
-              <button onClick={() => send("Write a small script that fetches a random joke and prints it.")}>
-                <span className="cdot" aria-hidden />
-                <span className="ctitle">Write a script</span>
-                <span className="csub">From idea to running code in one turn.</span>
-              </button>
-              <button onClick={() => send("Review my latest changes and suggest improvements.")}>
-                <span className="cdot" aria-hidden />
-                <span className="ctitle">Review changes</span>
-                <span className="csub">A second pair of eyes on your diff.</span>
-              </button>
-            </div>
-            {status.lastError && <p className="err">{status.lastError}</p>}
-            {error && <p className="err">{error}</p>}
-            <div className="composer">
-              <Composer
-                input={input}
-                setInput={setInput}
-                busy={false}
-                models={models}
-                model={model}
-                onModel={setModel}
-                effort={effort}
-                onEffort={chooseEffort}
-                approvalMode={approvalMode}
-                onApproval={setApprovalMode}
-                folderName={folderName}
-                folderPath={workspace}
-                onPickFolder={() => setPicking(true)}
-                onSend={() => send()}
-                onStop={stop}
-                attachments={attachments}
-                onAddFiles={addFiles}
-                onRemoveAttachment={removeAttachment}
-              />
-            </div>
-            {picking && <WorkspacePicker initial={workspace} onPick={chooseWorkspace} onClose={() => setPicking(false)} />}
-          </div>
-        ) : (
-          <>
-            <div className="chead">
-              <span className="chead-title">
-                {(() => {
-                  const s = sessions.find((x) => x.sessionId === sessionId);
-                  return s ? titleFor(s) : "Chat";
-                })()}
-              </span>
-              <span
-                className="chead-meta"
-                title={`Model ${model} · Effort ${effort || "Auto"} · Approval ${APPROVAL_LABELS[approvalMode] || approvalMode}`}
-              >
-                {model} · {effort || "Auto"} · {APPROVAL_LABELS[approvalMode] || approvalMode}
-              </span>
-              <span className="spacer" />
-              <button className="mini" onClick={retryLast} disabled={busy || !sessionId} title="Re-send the last user message (same model/effort)">
-                Retry
-              </button>
-              <button
-                className="mini"
-                onClick={async () => {
-                  if (!sessionId) return;
-                  setError(null);
-                  try {
-                    const r = await ops.fork(sessionId);
-                    const f = r.session;
-                    if (f) setSessions((xs) => upsertSessionList(xs, f));
-                  } catch (e: any) {
-                    setError(e.message);
-                  }
-                }}
-              >
-                Fork
-              </button>
-              <button
-                className="mini"
-                onClick={async () => {
-                  if (!sessionId) return;
-                  setError(null);
-                  try {
-                    await ops.compact(sessionId);
-                  } catch (e: any) {
-                    setError(e.message);
-                  }
-                }}
-              >
-                Compact
-              </button>
-              <button className="mini" onClick={exportChat}>
-                Export
-              </button>
-            </div>
-            {ctx && (
-              <div className="ctxbar" title={`${ctx.used} / ${ctx.window} tokens`}>
-                <div className="ctxfill" style={{ width: `${ctxPct}%` }} />
-              </div>
-            )}
-            <div className="chead-sub">
-              <input
-                id="transcript-search"
-                className="tsearch"
-                value={transcriptFilter}
-                onChange={(e) => setTranscriptFilter(e.target.value)}
-                placeholder="Search transcript… ( / )"
-                title="Filter messages and tool activity in this chat (/ focuses, Esc clears)"
-                aria-label="Search transcript"
-              />
-              {needle && (
-                <span className="matchnote" aria-live="polite">
-                  {visibleBlocks.length} of {blocks.length} shown
-                </span>
-              )}
-              {needle && (
-                <button className="mini" onClick={() => setTranscriptFilter("")} title="Clear transcript search (Esc)">
-                  Clear
-                </button>
-              )}
-            </div>
-            <div
-              ref={threadRef}
-              className="thread"
-              aria-live="polite"
-              onScroll={(e) => {
-                const el = e.currentTarget;
-                stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-              }}
-            >
-              {needle && visibleBlocks.length === 0 && (
-                <p className="hint">No matches for “{transcriptFilter.trim()}”.</p>
-              )}
-              {visibleBlocks.map((b) =>
-                b.type === "thinking" ? (
-                  <ThinkingBlock key={b.key} entries={b.entries} streamingId={streaming} />
-                ) : (
-                  <div
-                    key={b.item.itemId}
-                    className={`msg ${b.type === "user" ? "user" : "agent"}${streaming === b.item.itemId ? " streaming" : ""}`}
-                  >
-                    <div className="who">{b.type === "user" ? "You" : "Muse"}</div>
-                    {b.type === "user" ? (
-                      <pre className="body">{b.item.text}</pre>
-                    ) : (
-                      <Markdown text={b.item.text || (b.item.done ? "" : "…")} />
-                    )}
-                  </div>
-                ),
-              )}
-              {liveApprovals.map((a) => (
-                <ApprovalCard key={a.approvalId} a={a} onDecide={decide} />
-              ))}
-              {livePrompts.map((q) => (
-                <QuestionCard key={q.userInputId} q={q} onAnswer={(ans) => answerPrompt(q, ans)} onCancel={() => cancelPrompt(q)} />
-              ))}
-              {busy && !streaming && liveApprovals.length === 0 && livePrompts.length === 0 && (
-                <div className="thinking" aria-label="Muse is thinking">
-                  <span />
-                  <span />
-                  <span />
-                </div>
-              )}
-              <div ref={bottomRef} />
-            </div>
-            {error && <p className="err">{error}</p>}
-            {approvalMode === "allowAll" && (
-              <p className="hint trusthint" title="Auto-accept runs tools without asking">
-                Auto-accept is on: tools run without asking. Switch to Ask in the composer settings to approve each tool.
-              </p>
-            )}
-            <div className="composer">
-              <Composer
-                input={input}
-                setInput={setInput}
-                busy={busy}
-                models={models}
-                model={model}
-                onModel={changeModel}
-                effort={effort}
-                onEffort={chooseEffort}
-                approvalMode={approvalMode}
-                onApproval={changeApprovalMode}
-                folderName={folderName}
-                folderPath={workspace}
-                onPickFolder={() => setPicking(true)}
-                onSend={() => send()}
-                onStop={stop}
-                attachments={attachments}
-                onAddFiles={addFiles}
-                onRemoveAttachment={removeAttachment}
-              />
-            </div>
-            {picking && <WorkspacePicker initial={workspace} onPick={chooseWorkspace} onClose={() => setPicking(false)} />}
-          </>
-        )}
-      </main>
-      {browserOpen && (
-        <div className="browserwrap">
-          <BrowserPanel onAttach={attachScreenshot} onClose={() => setBrowserOpen(false)} />
-        </div>
-      )}
       </div>
     </div>
   );

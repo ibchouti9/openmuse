@@ -45,13 +45,20 @@ async function ensureServer() {
 }
 
 function createWindow() {
+  const isMac = process.platform === "darwin";
   const win = new BrowserWindow({
     width: 1220,
     height: 820,
     minWidth: 940,
     minHeight: 620,
     title: "OpenMuse",
-    backgroundColor: "#0a0e14",
+    backgroundColor: "#090d12",
+    ...(isMac
+      ? {
+          titleBarStyle: "hiddenInset",
+          trafficLightPosition: { x: 18, y: 18 },
+        }
+      : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
