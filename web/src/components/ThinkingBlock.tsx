@@ -35,7 +35,7 @@ function thinkingLabel(entry: ThreadItem): string {
     case "reminderChild":
       return "Reminder";
     case "compaction":
-      return "Context compacted";
+      return "Context Compacted";
     default:
       return entry.kind || "Activity";
   }
@@ -72,7 +72,7 @@ function thinkingDetail(entry: ThreadItem): string {
   return (entry.text || "").trim();
 }
 
-function shortPreview(s: string, n = 120): string {
+function shortPreview(s: string, n = 140): string {
   const one = (s || "").replace(/\s+/g, " ").trim();
   return one.length > n ? `${one.slice(0, n - 1)}…` : one;
 }
@@ -119,7 +119,10 @@ export default function ThinkingBlock({
   }
 
   return (
-    <div className={`thinking-card ${live ? "is-live" : "is-completed"} ${expanded ? "is-expanded" : ""}`}>
+    <div className={`thinking-card-3d ${live ? "is-live" : "is-settled"} ${expanded ? "is-expanded" : ""}`}>
+      {/* Specular Ambient Gradient Edge */}
+      <div className="thinking-card-specular-edge" />
+
       <button
         type="button"
         className="thinking-header-btn"
@@ -128,11 +131,13 @@ export default function ThinkingBlock({
       >
         <div className="thinking-indicator-badge">
           {live ? (
-            <div className="thinking-pulse-ring">
-              <span className="pulse-inner" />
+            <div className="neural-frequency-rings">
+              <span className="ring-pulse r1" />
+              <span className="ring-pulse r2" />
+              <span className="core-dot" />
             </div>
           ) : (
-            <div className="thinking-done-badge">
+            <div className="thinking-done-badge-3d">
               <CheckIcon size={11} />
             </div>
           )}
@@ -141,20 +146,28 @@ export default function ThinkingBlock({
         <div className="thinking-summary-meta">
           <div className="thinking-headline">
             <span className="thinking-title">
-              {live ? "Reasoning & Executing..." : "Thought for"}
+              {live ? "Neural Reasoning Active" : "Thought for"}
             </span>
             {!live && elapsed > 0 && (
-              <span className="thinking-duration">{elapsed}s</span>
+              <span className="thinking-duration font-mono">{elapsed}s</span>
             )}
-            <span className="thinking-step-count">
+            <span className="thinking-step-count font-mono">
               ({entries.length} step{entries.length === 1 ? "" : "s"})
             </span>
+            {live && (
+              <div className="neural-live-bars" aria-hidden>
+                <span className="bar b1" />
+                <span className="bar b2" />
+                <span className="bar b3" />
+                <span className="bar b4" />
+              </div>
+            )}
           </div>
 
           {preview && (
             <span
               key={live ? latest.itemId : `done-${entries.length}`}
-              className={`thinking-preview-text ${live ? "" : "settled"}`}
+              className={`thinking-preview-text ${live ? "live-stream" : "settled"}`}
               title={preview}
             >
               {preview}
@@ -185,7 +198,7 @@ export default function ThinkingBlock({
                   {idx < entries.length - 1 && <div className="step-connector-line" />}
                 </div>
 
-                <div className="step-content-card">
+                <div className="step-content-card-3d">
                   <div className="step-header">
                     <div className="step-icon-badge">
                       {thinkingIcon(entry)}
@@ -198,7 +211,7 @@ export default function ThinkingBlock({
                         type="button"
                         className="step-copy-btn"
                         onClick={() => copyText(entry.itemId, copyContent)}
-                        title="Copy step details"
+                        title="Copy step output"
                       >
                         {copiedId === entry.itemId ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
                         <span>{copiedId === entry.itemId ? "Copied" : "Copy"}</span>
@@ -209,20 +222,20 @@ export default function ThinkingBlock({
                   {isTool ? (
                     <>
                       {cmd && (
-                        <div className="step-code-block">
+                        <div className="step-code-block-3d">
                           <span className="terminal-prompt">$</span>
                           <pre className="step-cmd-text">{cmd}</pre>
                         </div>
                       )}
                       {out && (
-                        <pre className="step-output-text">{out}</pre>
+                        <pre className="step-output-text-3d">{out}</pre>
                       )}
                       {!cmd && !out && detail && (
-                        <pre className="step-detail-text">{detail}</pre>
+                        <pre className="step-detail-text-3d">{detail}</pre>
                       )}
                     </>
                   ) : (
-                    detail && <pre className="step-detail-text">{detail}</pre>
+                    detail && <pre className="step-detail-text-3d">{detail}</pre>
                   )}
                 </div>
               </div>

@@ -77,6 +77,7 @@ export default function Composer({
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   const readyCount = attachments.filter((a) => a.ready && !a.error).length;
   const canSend = !!input.trim() || readyCount > 0;
@@ -100,16 +101,26 @@ export default function Composer({
 
   function handleInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
     setInput(e.target.value);
-    // Auto-resize textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 240)}px`;
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 260)}px`;
     }
+  }
+
+  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    if (!cardRef.current) return;
+    const rect = cardRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    cardRef.current.style.setProperty("--cursor-x", `${x}px`);
+    cardRef.current.style.setProperty("--cursor-y", `${y}px`);
   }
 
   return (
     <div
-      className={`composer-card ${dragOver ? "drag-active" : ""}`}
+      ref={cardRef}
+      className={`composer-card-3d ${dragOver ? "drag-active" : ""} ${effort ? `effort-${effort}` : ""}`}
+      onMouseMove={handleMouseMove}
       onDragOver={(e) => {
         e.preventDefault();
         setDragOver(true);
@@ -122,11 +133,14 @@ export default function Composer({
         if (files.length > 0) onAddFiles(files);
       }}
     >
+      {/* Dynamic Specular Light Glint */}
+      <div className="composer-specular-light" aria-hidden />
+
       {/* Attachments preview tray */}
       {attachments.length > 0 && (
         <div className="composer-attachments">
           {attachments.map((a) => (
-            <div key={a.id} className="attachment-chip" title={a.error || `${a.name} · ${Math.round(a.size / 1024)} KB`}>
+            <div key={a.id} className="attachment-chip-3d" title={a.error || `${a.name} · ${Math.round(a.size / 1024)} KB`}>
               {a.kind === "image" ? (
                 a.dataUrl ? (
                   <img className="chip-preview-img" src={a.dataUrl} alt="" />
@@ -197,7 +211,7 @@ export default function Composer({
           />
           <button
             type="button"
-            className="action-pill-btn"
+            className="action-pill-btn-3d"
             onClick={() => fileRef.current?.click()}
             title="Attach images, documents or code files"
           >
@@ -208,7 +222,7 @@ export default function Composer({
           {/* Working directory picker */}
           <button
             type="button"
-            className="action-pill-btn"
+            className="action-pill-btn-3d"
             onClick={onPickFolder}
             title={`Working directory: ${folderPath || "Server default"}`}
           >
@@ -220,7 +234,7 @@ export default function Composer({
           <div className="popover-anchor">
             <button
               type="button"
-              className={`action-pill-btn ${settingsOpen ? "active" : ""}`}
+              className={`action-pill-btn-3d ${settingsOpen ? "active" : ""}`}
               onClick={() => setSettingsOpen((v) => !v)}
               title="Configure model, effort level, and tool approvals"
             >
@@ -238,7 +252,7 @@ export default function Composer({
             {settingsOpen && (
               <>
                 <div className="modal-backdrop-transparent" onClick={() => setSettingsOpen(false)} />
-                <div className="composer-popover">
+                <div className="composer-popover-3d">
                   <div className="popover-header">
                     <span className="popover-title">Execution Settings</span>
                   </div>
@@ -318,7 +332,7 @@ export default function Composer({
           {busy ? (
             <button
               type="button"
-              className="stop-execution-btn"
+              className="stop-execution-btn-3d"
               onClick={onStop}
               title="Interrupt and stop response generation"
             >
@@ -328,7 +342,7 @@ export default function Composer({
           ) : (
             <button
               type="button"
-              className="send-message-btn"
+              className={`send-message-btn-3d ${canSend ? "ready" : ""}`}
               onClick={() => {
                 setSettingsOpen(false);
                 onSend();

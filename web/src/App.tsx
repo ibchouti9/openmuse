@@ -30,6 +30,8 @@ import GitMenu, { GitStatus } from "./components/GitMenu";
 import WorkspacePicker from "./components/WorkspacePicker";
 import SettingsView from "./components/SettingsView";
 import AccountView from "./components/AccountView";
+import MusePrism3D from "./components/MusePrism3D";
+import MessageActions from "./components/MessageActions";
 
 interface Item extends ThreadItem {}
 
@@ -920,9 +922,9 @@ export default function App() {
       <aside className="app-sidebar">
         <div className="sidebar-header-drag">
           <div className="app-brand">
-            <span className="brand-icon-mark" aria-hidden>
-              M
-            </span>
+            <div className="brand-prism-wrap" aria-hidden>
+              <MusePrism3D size={28} interactive={false} />
+            </div>
             <span className="brand-name">OpenMuse</span>
             <span className="brand-version-tag">v0.1</span>
           </div>
@@ -1221,8 +1223,8 @@ export default function App() {
           ) : !sessionId ? (
             /* Hero / Empty State Screen */
             <div className="hero-empty-container">
-              <div className="hero-brand-mark" aria-hidden>
-                M
+              <div className="hero-prism-container" aria-hidden>
+                <MusePrism3D size={160} interactive={true} />
               </div>
               <h1 className="hero-heading">{daypart}</h1>
               <p className="hero-subheading">
@@ -1343,10 +1345,28 @@ export default function App() {
                       <div className="message-author-header">
                         {b.type === "agent" && (
                           <div className="agent-avatar-small" aria-hidden>
-                            M
+                            <MusePrism3D size={18} interactive={false} />
                           </div>
                         )}
-                        <span>{b.type === "user" ? "You" : "Muse"}</span>
+                        <span className="message-author-label">{b.type === "user" ? "You" : "Muse"}</span>
+                        <div className="spacer" />
+                        <MessageActions
+                          text={b.item.text || ""}
+                          isUser={b.type === "user"}
+                          onFork={() => {
+                            setInput(b.item.text || "");
+                          }}
+                          onRetry={
+                            b.type === "agent"
+                              ? () => {
+                                  const lastUser = [...visibleBlocks].reverse().find((x) => x.type === "user");
+                                  if (lastUser && "item" in lastUser && lastUser.item.text) {
+                                    send(lastUser.item.text);
+                                  }
+                                }
+                              : undefined
+                          }
+                        />
                       </div>
 
                       {b.type === "user" ? (

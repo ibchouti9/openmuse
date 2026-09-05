@@ -98,12 +98,13 @@ export default function ApprovalCard({
 
   return (
     <div
-      className="approval-card"
+      className="approval-card-3d"
       role="group"
       aria-label={`Approval request for ${a.toolName}`}
       aria-busy={busy}
       onKeyDown={onKeyDown}
     >
+      <div className="approval-specular-edge" aria-hidden />
       <div className="approval-card-header">
         <div className="approval-badge-icon">
           <ShieldAlertIcon size={16} />

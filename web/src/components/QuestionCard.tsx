@@ -76,7 +76,8 @@ export default function QuestionCard({
   }
 
   return (
-    <div className="question-card">
+    <div className="question-card-3d">
+      <div className="question-specular-edge" aria-hidden />
       <div className="question-card-header">
         <div className="question-badge-icon">
           <SparklesIcon size={16} />
