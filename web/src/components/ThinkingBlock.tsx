@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback, memo } from "react";
 import { ThreadItem, thinkingLive } from "../threading";
 import {
   CheckIcon,
@@ -360,24 +360,8 @@ function TruncatedOutput({ text, maxLines = 5 }: { text: string; maxLines?: numb
   );
 }
 
-export default function ThinkingBlock({
-  entries,
-  streamingId,
-  defaultOpen,
-}: {
-  entries: ThreadItem[];
-  streamingId: string | null;
-  defaultOpen?: boolean;
-}) {
-  const [expanded, setExpanded] = useState(defaultOpen ?? false);
-  const [categoryFilter, setCategoryFilter] = useState<string>("all");
-  const live = thinkingLive(entries, streamingId);
+const ThinkingTimer = function ThinkingTimer({ live }: { live: boolean }) {
   const [elapsed, setElapsed] = useState(0);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const seenCount = useRef(entries.length);
-
-  // Timer for duration calculation
   useEffect(() => {
     if (!live) return;
     const t0 = Date.now();
@@ -388,15 +372,240 @@ export default function ThinkingBlock({
     return () => clearInterval(interval);
   }, [live]);
 
-  // Auto-scroll timeline when expanded and streaming new items
+  if (!live && elapsed === 0) return null;
+  return <span className="thinking-duration font-mono">{elapsed}s</span>;
+};
+
+interface StepRowProps {
+  entry: ThreadItem;
+  index: number;
+  isLast: boolean;
+  onCopy: (id: string, text: string) => void;
+  isCopied: boolean;
+}
+
+const CompletedStepRow = memo(function CompletedStepRow({
+  entry,
+  index,
+  isLast,
+  onCopy,
+  isCopied,
+}: StepRowProps) {
+  const [detailOpen, setDetailOpen] = useState(false);
+  const act = useMemo(() => humanizeAction(entry), [entry]);
+  const copyContent = act.commandSnippet || act.codeSnippet || act.output || act.headline;
+
+  return (
+    <div className="vertical-step-row is-completed">
+      <div className="step-gutter-col">
+        <div className="step-bullet-node completed" title="Step completed">
+          <CheckIcon size={10} />
+        </div>
+        {!isLast && <div className="step-gutter-line" />}
+      </div>
+
+      <div className="step-card-col">
+        <div
+          className="step-compact-header"
+          onClick={() => setDetailOpen((v) => !v)}
+          title="Click to toggle details"
+        >
+          <span className="step-index-badge font-mono">{String(index + 1).padStart(2, "0")}</span>
+          <span className={`step-cat-pill cat-${act.category}`}>
+            <CategoryIcon category={act.category} />
+            <span>{act.categoryLabel}</span>
+          </span>
+          <span className="step-headline-text font-mono" title={act.headline}>
+            {act.headline}
+          </span>
+          <div className="spacer" />
+          {copyContent && (
+            <button
+              type="button"
+              className="step-micro-copy-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCopy(entry.itemId, copyContent);
+              }}
+              title="Copy output"
+            >
+              {isCopied ? <CheckIcon size={11} /> : <CopyIcon size={11} />}
+            </button>
+          )}
+          <span className="step-chevron-icon">
+            <ChevronRightIcon size={12} className={detailOpen ? "is-rotated" : ""} />
+          </span>
+        </div>
+
+        {detailOpen && (
+          <div className="step-details-drawer">
+            {act.commandSnippet && (
+              <div className="step-terminal-block-3d">
+                <span className="terminal-prompt">$</span>
+                <pre className="terminal-cmd-text font-mono">{act.commandSnippet}</pre>
+              </div>
+            )}
+            {act.codeSnippet && !act.commandSnippet && (
+              <pre className="step-code-snippet-3d font-mono">{act.codeSnippet}</pre>
+            )}
+            {act.output && <TruncatedOutput text={act.output} maxLines={4} />}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
+const HeroActiveStepCard = memo(function HeroActiveStepCard({
+  entry,
+  index,
+  live,
+  onCopy,
+  isCopied,
+}: {
+  entry: ThreadItem;
+  index: number;
+  live: boolean;
+  onCopy: (id: string, text: string) => void;
+  isCopied: boolean;
+}) {
+  const act = useMemo(() => humanizeAction(entry), [entry]);
+  const copyContent = act.commandSnippet || act.codeSnippet || act.output || act.headline;
+
+  return (
+    <div className={`vertical-step-row is-hero ${live ? "hero-live" : "hero-settled"}`}>
+      <div className="step-gutter-col">
+        <div className={`step-bullet-node hero ${live ? "pulse-active" : "node-done"}`}>
+          {live ? (
+            <span className="hero-bullet-glow-dot" />
+          ) : (
+            <CheckIcon size={11} />
+          )}
+        </div>
+      </div>
+
+      <div className="step-hero-card-3d">
+        {/* Specular Edge Glow on Active Hero */}
+        {live && <div className="hero-specular-edge-glow" />}
+
+        <div className="hero-card-header-bar">
+          <div className="hero-header-meta">
+            <div className={`hero-category-chip cat-${act.category}`}>
+              <CategoryIcon category={act.category} />
+              <span>{act.categoryLabel}</span>
+            </div>
+            <span className="hero-step-counter-tag font-mono">
+              {live ? `STEP ${String(index + 1).padStart(2, "0")} • ACTIVE` : `STEP ${String(index + 1).padStart(2, "0")}`}
+            </span>
+          </div>
+
+          <div className="hero-header-controls">
+            {live && (
+              <div className="hero-audio-equalizer" aria-label="Running">
+                <span className="hero-bar hb1" />
+                <span className="hero-bar hb2" />
+                <span className="hero-bar hb3" />
+                <span className="hero-bar hb4" />
+              </div>
+            )}
+            {copyContent && (
+              <button
+                type="button"
+                className="step-copy-btn hero-copy-action"
+                onClick={() => onCopy(entry.itemId, copyContent)}
+                title="Copy step output"
+              >
+                {isCopied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+                <span>{isCopied ? "Copied" : "Copy"}</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Hero Title & Target */}
+        <div className="hero-headline-block">
+          <span className="hero-action-title">{act.actionTitle}</span>
+          {act.target && (
+            <span className="hero-target-badge font-mono" title={act.target}>
+              {act.target}
+            </span>
+          )}
+        </div>
+
+        {/* Command Box if Terminal */}
+        {act.commandSnippet && (
+          <div className="step-terminal-block-3d hero-terminal-view">
+            <span className="terminal-prompt">$</span>
+            <pre className="terminal-cmd-text font-mono">{act.commandSnippet}</pre>
+          </div>
+        )}
+
+        {/* Code Snippet if File Edit */}
+        {act.codeSnippet && !act.commandSnippet && (
+          <pre className="step-code-snippet-3d hero-code-view font-mono">{act.codeSnippet}</pre>
+        )}
+
+        {/* Output View with Line Cap */}
+        {act.output && (
+          <TruncatedOutput text={act.output} maxLines={5} />
+        )}
+      </div>
+    </div>
+  );
+});
+
+export default function ThinkingBlock({
+  entries,
+  streamingId,
+  defaultOpen,
+}: {
+  entries: ThreadItem[];
+  streamingId: string | null;
+  defaultOpen?: boolean;
+}) {
+  const [collapsed, setCollapsed] = useState(defaultOpen === false);
+  const [showAllEarlier, setShowAllEarlier] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const seenCount = useRef(entries.length);
+
+  const live = thinkingLive(entries, streamingId);
+
+  // Auto-scroll timeline smoothly when streaming new entries
   useEffect(() => {
     const el = bodyRef.current;
-    if (!expanded || !el || entries.length === seenCount.current) return;
+    if (collapsed || !el || entries.length === seenCount.current) return;
     seenCount.current = entries.length;
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [entries.length, expanded]);
+  }, [entries.length, collapsed]);
 
-  // Generate an elegant settled highlights summary
+  // Copy helper
+  const copyText = useCallback((id: string, text: string) => {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 1400);
+    });
+  }, []);
+
+  const total = entries.length;
+  const latestIndex = total - 1;
+  const latestEntry = entries[latestIndex];
+
+  // Previous completed entries
+  const allPrevious = useMemo(() => {
+    return total > 1 ? entries.slice(0, latestIndex) : [];
+  }, [entries, latestIndex, total]);
+
+  // Keep earlier ones clean if there are more than 3
+  const hasHiddenEarlier = allPrevious.length > 3 && !showAllEarlier;
+  const visiblePrevious = useMemo(() => {
+    if (!hasHiddenEarlier) return allPrevious;
+    return allPrevious.slice(allPrevious.length - 2);
+  }, [allPrevious, hasHiddenEarlier]);
+
+  const hiddenCount = hasHiddenEarlier ? allPrevious.length - 2 : 0;
+
+  // Highlights summary for settled title
   const settledSummary = useMemo(() => {
     if (entries.length === 0) return "";
     const counts: Record<string, number> = {};
@@ -409,43 +618,13 @@ export default function ThinkingBlock({
     if (counts["file-write"]) parts.push(`${counts["file-write"]} file${counts["file-write"] > 1 ? "s" : ""} edited`);
     if (counts["terminal"]) parts.push(`${counts["terminal"]} command${counts["terminal"] > 1 ? "s" : ""}`);
     if (counts["search"]) parts.push(`${counts["search"]} search${counts["search"] > 1 ? "es" : ""}`);
-    if (counts["web"]) parts.push(`${counts["web"]} web query`);
     if (parts.length > 0) return parts.slice(0, 3).join(", ");
-    return "Analyzed workspace and synthesized response";
+    return "Synthesized reasoning plan";
   }, [entries]);
 
-  // Recent activity stream for the live rail (show last 3 steps)
-  const recentSteps = useMemo(() => {
-    const total = entries.length;
-    const start = Math.max(0, total - 3);
-    return entries.slice(start).map((entry, idx) => {
-      const globalIndex = start + idx;
-      const isActive = live && globalIndex === total - 1;
-      return {
-        entry,
-        globalIndex,
-        isActive,
-        action: humanizeAction(entry),
-      };
-    });
-  }, [entries, live]);
-
-  // Filtered entries for expanded inspector
-  const filteredEntries = useMemo(() => {
-    if (categoryFilter === "all") return entries;
-    return entries.filter((e) => humanizeAction(e).category === categoryFilter);
-  }, [entries, categoryFilter]);
-
-  function copyText(id: string, text: string) {
-    navigator.clipboard?.writeText(text).then(() => {
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 1400);
-    });
-  }
-
   return (
-    <div className={`thinking-card-3d ${live ? "is-live" : "is-settled"} ${expanded ? "is-expanded" : ""}`}>
-      {/* Specular Ambient Gradient Edge */}
+    <div className={`thinking-card-3d ${live ? "is-live" : "is-settled"} ${collapsed ? "is-collapsed" : "is-open"}`}>
+      {/* Specular Ambient Edge */}
       <div className="thinking-card-specular-edge" />
 
       {/* Header Bar */}
@@ -453,8 +632,8 @@ export default function ThinkingBlock({
         <button
           type="button"
           className="thinking-header-main-btn"
-          onClick={() => setExpanded((v) => !v)}
-          aria-expanded={expanded}
+          onClick={() => setCollapsed((v) => !v)}
+          aria-expanded={!collapsed}
         >
           <div className="thinking-indicator-badge">
             {live ? (
@@ -476,22 +655,11 @@ export default function ThinkingBlock({
                 {live ? "Muse is reasoning..." : "Reasoned"}
               </span>
 
-              {!live && elapsed > 0 && (
-                <span className="thinking-duration font-mono">{elapsed}s</span>
-              )}
+              <ThinkingTimer live={live} />
 
               <span className="thinking-step-count font-mono">
                 ({entries.length} step{entries.length === 1 ? "" : "s"})
               </span>
-
-              {live && (
-                <div className="neural-live-bars" aria-hidden>
-                  <span className="bar b1" />
-                  <span className="bar b2" />
-                  <span className="bar b3" />
-                  <span className="bar b4" />
-                </div>
-              )}
             </div>
 
             {!live && (
@@ -503,194 +671,59 @@ export default function ThinkingBlock({
 
           <div className="thinking-header-right-actions">
             <span className="thinking-view-steps-hint">
-              {expanded ? "Hide details" : "View steps"}
+              {collapsed ? "Show vertical flow" : "Collapse"}
             </span>
             <div className="thinking-expand-icon">
-              <ChevronRightIcon size={14} />
+              <ChevronRightIcon size={14} className={collapsed ? "" : "is-expanded-rotate"} />
             </div>
           </div>
         </button>
       </div>
 
-      {/* LIVE Step Rail: Visible while thinking without expanding! */}
-      {live && recentSteps.length > 0 && !expanded && (
-        <div className="thinking-live-rail">
-          {entries.length > 3 && (
-            <div className="live-rail-earlier-notice" onClick={() => setExpanded(true)}>
-              <span>+{entries.length - 3} earlier steps completed</span>
+      {/* Vertical Steps Stream (Always visible vertically when open!) */}
+      {!collapsed && (
+        <div ref={bodyRef} className="vertical-thinking-timeline-flow">
+          {/* Earlier steps notice toggle */}
+          {hasHiddenEarlier && (
+            <div className="earlier-steps-toggle-row">
+              <button
+                type="button"
+                className="earlier-steps-toggle-btn"
+                onClick={() => setShowAllEarlier(true)}
+              >
+                ▲ Show {hiddenCount} earlier completed step{hiddenCount > 1 ? "s" : ""}
+              </button>
             </div>
           )}
-          <div className="live-rail-rows">
-            {recentSteps.map(({ entry, globalIndex, isActive, action }) => (
-              <div
-                key={entry.itemId}
-                className={`live-rail-row ${isActive ? "is-active" : "is-done"}`}
-                onClick={() => setExpanded(true)}
-              >
-                <div className="live-rail-status">
-                  {isActive ? (
-                    <span className="rail-active-pulse-dot" />
-                  ) : (
-                    <span className="rail-done-check"><CheckIcon size={10} /></span>
-                  )}
-                </div>
-                <span className="live-rail-step-num font-mono">
-                  {String(globalIndex + 1).padStart(2, "0")}
-                </span>
-                <span className={`live-rail-category-tag cat-${action.category}`}>
-                  {action.categoryLabel}
-                </span>
-                <span className="live-rail-headline font-mono" title={action.headline}>
-                  {action.headline}
-                </span>
-                {isActive && (
-                  <span className="live-rail-running-badge">Running</span>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
-      {/* SETTLED Step Journey Strip: Compact horizontal tokens chain when completed */}
-      {!live && entries.length > 0 && !expanded && (
-        <div className="thinking-journey-strip" onClick={() => setExpanded(true)}>
-          <div className="journey-track-scroll">
-            {entries.slice(0, 6).map((entry, idx) => {
-              const act = humanizeAction(entry);
-              return (
-                <div key={entry.itemId} className="journey-step-chip" title={act.headline}>
-                  <span className={`journey-icon-wrap cat-${act.category}`}>
-                    <CategoryIcon category={act.category} />
-                  </span>
-                  <span className="journey-label font-mono">
-                    {act.shortTarget || act.categoryLabel}
-                  </span>
-                  {idx < Math.min(entries.length, 6) - 1 && (
-                    <span className="journey-arrow">→</span>
-                  )}
-                </div>
-              );
-            })}
-            {entries.length > 6 && (
-              <span className="journey-more-pill font-mono">
-                +{entries.length - 6} more
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Expandable Step-by-Step Inspector */}
-      <div className={`thinking-content-collapse ${expanded ? "expanded" : ""}`}>
-        {/* Category Filter Tabs */}
-        {entries.length > 2 && (
-          <div className="thinking-filter-tabs-bar">
-            <button
-              type="button"
-              className={`filter-tab-pill ${categoryFilter === "all" ? "active" : ""}`}
-              onClick={() => setCategoryFilter("all")}
-            >
-              All ({entries.length})
-            </button>
-            {["file-read", "file-write", "terminal", "search", "reasoning"].map((cat) => {
-              const count = entries.filter((e) => humanizeAction(e).category === cat).length;
-              if (count === 0) return null;
-              const labels: Record<string, string> = {
-                "file-read": "Files Read",
-                "file-write": "Files Edited",
-                "terminal": "Terminal",
-                "search": "Search",
-                "reasoning": "Reasoning",
-              };
-              return (
-                <button
-                  key={cat}
-                  type="button"
-                  className={`filter-tab-pill cat-${cat} ${categoryFilter === cat ? "active" : ""}`}
-                  onClick={() => setCategoryFilter(cat)}
-                >
-                  {labels[cat]} ({count})
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Chronological Step Timeline */}
-        <div ref={bodyRef} className="thinking-steps-timeline">
-          {filteredEntries.map((entry, idx) => {
-            const act = humanizeAction(entry);
-            const active = streamingId === entry.itemId || entry.status === "inProgress";
-            const copyContent = act.commandSnippet || act.codeSnippet || act.output || act.headline;
-
+          {/* Previous Completed Steps Rows */}
+          {visiblePrevious.map((entry, idx) => {
+            const actualIndex = hasHiddenEarlier ? hiddenCount + idx : idx;
             return (
-              <div
+              <CompletedStepRow
                 key={entry.itemId}
-                className={`timeline-step-row ${active ? "active-step" : "completed-step"}`}
-              >
-                <div className="step-gutter">
-                  <span className="step-number font-mono">{String(idx + 1).padStart(2, "0")}</span>
-                  {idx < filteredEntries.length - 1 && <div className="step-connector-line" />}
-                </div>
-
-                <div className="step-content-card-3d">
-                  <div className="step-header">
-                    <div className={`step-icon-badge cat-${act.category}`}>
-                      <CategoryIcon category={act.category} />
-                    </div>
-
-                    <span className="step-label">{act.actionTitle}</span>
-
-                    {act.target && (
-                      <span className="step-target-pill font-mono" title={act.target}>
-                        {act.target}
-                      </span>
-                    )}
-
-                    {active && <span className="step-active-pill">Running</span>}
-
-                    <div className="spacer" />
-
-                    {copyContent && (
-                      <button
-                        type="button"
-                        className="step-copy-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          copyText(entry.itemId, copyContent);
-                        }}
-                        title="Copy step content"
-                      >
-                        {copiedId === entry.itemId ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
-                        <span>{copiedId === entry.itemId ? "Copied" : "Copy"}</span>
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Terminal Execution Snippet */}
-                  {act.commandSnippet && (
-                    <div className="step-terminal-block-3d">
-                      <span className="terminal-prompt">$</span>
-                      <pre className="terminal-cmd-text font-mono">{act.commandSnippet}</pre>
-                    </div>
-                  )}
-
-                  {/* Code Modification Snippet */}
-                  {act.codeSnippet && !act.commandSnippet && (
-                    <pre className="step-code-snippet-3d font-mono">{act.codeSnippet}</pre>
-                  )}
-
-                  {/* Visible Tool / Terminal Output with line truncation */}
-                  {act.output && (
-                    <TruncatedOutput text={act.output} maxLines={5} />
-                  )}
-                </div>
-              </div>
+                entry={entry}
+                index={actualIndex}
+                isLast={false}
+                onCopy={copyText}
+                isCopied={copiedId === entry.itemId}
+              />
             );
           })}
+
+          {/* HERO LATEST / ACTIVE STEP */}
+          {latestEntry && (
+            <HeroActiveStepCard
+              key={latestEntry.itemId}
+              entry={latestEntry}
+              index={latestIndex}
+              live={live}
+              onCopy={copyText}
+              isCopied={copiedId === latestEntry.itemId}
+            />
+          )}
         </div>
-      </div>
+      )}
     </div>
   );
 }
