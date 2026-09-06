@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { ShieldAlertIcon, TerminalIcon, ChevronRightIcon } from "./Icons";
 
 export interface Choice {
@@ -58,6 +58,14 @@ export default function ApprovalCard({
   const [feedback, setFeedback] = useState("");
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [showArgs, setShowArgs] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (cardRef.current && cardRef.current.scrollTop !== 0) {
+      cardRef.current.scrollTop = 0;
+    }
+  }, []);
+
   const choices = a.availableChoices;
   const canFeedback = choices.some((c) => c.acceptsFeedback);
   const feedbackChoice = choices.find((c) => c.acceptsFeedback);
@@ -98,6 +106,7 @@ export default function ApprovalCard({
 
   return (
     <div
+      ref={cardRef}
       className="approval-card-3d"
       role="group"
       aria-label={`Approval request for ${a.toolName}`}
@@ -164,7 +173,6 @@ export default function ApprovalCard({
               key={c.choiceId}
               type="button"
               className={`approval-choice-btn ${kind}`}
-              autoFocus={i === safestIndex}
               disabled={busy}
               aria-label={`${c.label || c.choiceId} (press ${i + 1} of ${choices.length})`}
               title={i < 9 ? `Press ${i + 1} on keyboard` : undefined}

@@ -182,11 +182,13 @@ export default function App() {
   const [items, setItems] = useState<Item[]>([]);
   const itemsRef = useRef<Item[]>([]);
   itemsRef.current = items;
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [prompts, setPrompts] = useState<InputPrompt[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
   const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ connected: boolean; lastError: string | null; mock?: boolean }>({
     connected: false,
     lastError: null,
@@ -212,7 +214,28 @@ export default function App() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
+  const isAutoScrollingRef = useRef(false);
   const pendingDeltas = useRef<{ itemId: string; field: string; delta: string }[]>([]);
+
+  const scrollToBottom = useCallback((smooth = false) => {
+    if (!stickRef.current) return;
+    const el = threadRef.current;
+    if (!el) return;
+    isAutoScrollingRef.current = true;
+    if (smooth) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+    requestAnimationFrame(() => {
+      if (el && stickRef.current) {
+        el.scrollTop = el.scrollHeight;
+      }
+      setTimeout(() => {
+        isAutoScrollingRef.current = false;
+      }, 150);
+    });
+  }, []);
 
   function chooseEffort(e: string) {
     setEffort(e);
@@ -416,8 +439,24 @@ export default function App() {
 
   useEffect(() => {
     if (!stickRef.current) return;
-    bottomRef.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth", block: "end" });
-  }, [items, approvals, prompts, streaming]);
+    scrollToBottom(!streaming);
+  }, [items, approvals, prompts, streaming, scrollToBottom]);
+
+  // When an approval or question appears, pin to bottom and immediately reveal it
+  useEffect(() => {
+    if (approvals.some((a) => !a.settled) || prompts.some((q) => !q.settled)) {
+      stickRef.current = true;
+      const el = threadRef.current;
+      if (el) {
+        el.scrollTop = el.scrollHeight;
+      }
+      requestAnimationFrame(() => {
+        if (threadRef.current) {
+          threadRef.current.scrollTop = threadRef.current.scrollHeight;
+        }
+      });
+    }
+  }, [approvals, prompts]);
 
   const upsertItem = useCallback((wire: any) => {
     if (!wire || !wire.itemId || typeof wire.kind !== "string") return;
@@ -487,6 +526,9 @@ export default function App() {
         case "item/updated":
           upsertItem(p.item);
           setBusy(true);
+          if (p.item && p.item.itemId) {
+            setStreaming(p.item.itemId);
+          }
           break;
         case "item/delta": {
           if (!p.itemId || typeof p.delta !== "string") break;
@@ -655,12 +697,18 @@ export default function App() {
   }
 
   async function loadTranscript(sid: string) {
+    if (busyRef.current) return;
     try {
       const r = await api(`/api/transcript?sessionId=${encodeURIComponent(sid)}`);
+      if (busyRef.current) return;
       const arr = r.items || [];
       if (arr.length > 0) {
         const mapped = arr.filter(keepWire).map(wireToItem);
-        setItems(mapped);
+        setItems((current) => {
+          if (busyRef.current) return current;
+          if (current.length > mapped.length) return current;
+          return mapped;
+        });
         titleFromItems(mapped, sid);
       }
     } catch {
@@ -706,6 +754,7 @@ export default function App() {
   }
 
   async function send(preset?: string) {
+    stickRef.current = true;
     const raw = (preset ?? input).trim();
     const ready = attachments.filter((a) => a.ready && !a.error);
     if ((!raw && ready.length === 0) || busy) return;
@@ -848,7 +897,7 @@ export default function App() {
   const liveApprovals = approvals.filter((a) => !a.settled);
   const livePrompts = prompts.filter((q) => !q.settled);
   const ctxPct = ctx ? Math.min(100, Math.round((ctx.used / ctx.window) * 100)) : 0;
-  const blocks = useMemo(() => groupThread(items), [items]);
+  const blocks = useMemo(() => groupThread(items, { busy, streamingId: streaming }), [items, busy, streaming]);
 
   const needle = transcriptFilter.trim().toLowerCase();
   const visibleBlocks = useMemo(() => {
@@ -1408,7 +1457,13 @@ export default function App() {
                 ref={threadRef}
                 className="conversation-thread-scroll"
                 aria-live="polite"
+                onWheel={(e) => {
+                  if (e.deltaY < 0) {
+                    stickRef.current = false;
+                  }
+                }}
                 onScroll={(e) => {
+                  if (isAutoScrollingRef.current) return;
                   const el = e.currentTarget;
                   stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
                 }}
@@ -1431,7 +1486,13 @@ export default function App() {
 
                 {visibleBlocks.map((b) =>
                   b.type === "thinking" ? (
-                    <ThinkingBlock key={b.key} entries={b.entries} streamingId={streaming} />
+                    <ThinkingBlock
+                      key={b.key}
+                      entries={b.entries}
+                      streamingId={streaming}
+                      isLive={b.isLive}
+                      onStop={stop}
+                    />
                   ) : (
                     <div
                       key={b.item.itemId}
@@ -1498,39 +1559,7 @@ export default function App() {
                   />
                 ))}
 
-                {/* Active Neural Synthesis Card */}
-                {busy && !streaming && liveApprovals.length === 0 && livePrompts.length === 0 && (
-                  <div className="neural-synthesis-live-card" aria-label="Muse is processing">
-                    <div className="neural-synthesis-glow" />
-                    <div className="neural-synthesis-left">
-                      <div className="neural-synthesis-avatar" aria-hidden>
-                        <MusePrism3D size={22} interactive={false} />
-                      </div>
-                      <div className="neural-synthesis-content">
-                        <div className="neural-synthesis-title-row">
-                          <span className="neural-synthesis-title">Synthesizing response...</span>
-                          <div className="neural-live-bars" aria-hidden>
-                            <span className="bar b1" />
-                            <span className="bar b2" />
-                            <span className="bar b3" />
-                            <span className="bar b4" />
-                          </div>
-                        </div>
-                        <span className="neural-synthesis-sub">Analyzing workspace context and preparing execution plan</span>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="neural-synthesis-stop-btn"
-                      onClick={stop}
-                      title="Interrupt generation"
-                    >
-                      <StopIcon size={12} />
-                      <span>Stop</span>
-                    </button>
-                  </div>
-                )}
-
+                <div style={{ height: 28, flexShrink: 0 }} aria-hidden="true" />
                 <div ref={bottomRef} />
               </div>
 

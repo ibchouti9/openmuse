@@ -1,56 +1,19 @@
-import { useEffect, useRef, useState, useMemo, useCallback, memo } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { ThreadItem, thinkingLive } from "../threading";
-import {
-  CheckIcon,
-  ChevronRightIcon,
-  CodeIcon,
-  CopyIcon,
-  CpuIcon,
-  FileTextIcon,
-  FolderIcon,
-  GlobeIcon,
-  SearchIcon,
-  SparklesIcon,
-  TerminalIcon,
-} from "./Icons";
+import { ChevronDownIcon, ChevronRightIcon, StopIcon } from "./Icons";
 
-export type ToolCategory =
-  | "file-read"
-  | "file-write"
-  | "terminal"
-  | "search"
-  | "web"
-  | "reasoning"
-  | "other";
-
-export interface HumanizedAction {
-  category: ToolCategory;
-  categoryLabel: string;
-  actionTitle: string;
-  target?: string;
-  shortTarget?: string;
-  headline: string;
-  preview: string;
-  commandSnippet?: string;
-  codeSnippet?: string;
-  output?: string;
-}
-
-function cleanPath(p?: string): string {
-  if (!p) return "";
-  let s = String(p).trim().replace(/^["']|["']$/g, "");
-  const segments = s.split("/").filter(Boolean);
-  if (segments.length > 3) {
-    return segments.slice(-3).join("/");
+export function safeStr(v: any): string {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (Array.isArray(v)) return v.map(safeStr).join(" ");
+  if (typeof v === "object") {
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return String(v);
+    }
   }
-  return s;
-}
-
-function shortBaseName(p?: string): string {
-  if (!p) return "";
-  const s = String(p).trim().replace(/^["']|["']$/g, "");
-  const segments = s.split("/").filter(Boolean);
-  return segments[segments.length - 1] || s;
+  return String(v);
 }
 
 function safeParseArgs(raw?: any): Record<string, any> {
@@ -65,762 +28,569 @@ function safeParseArgs(raw?: any): Record<string, any> {
   }
 }
 
-export function humanizeAction(entry: ThreadItem): HumanizedAction {
-  if (entry.kind === "reasoning") {
-    const summaryParts = (entry.summary || []).filter((s) => s && s.trim());
-    const thoughtText = summaryParts.length > 0 ? summaryParts.join(" ") : (entry.text || "");
-    const clean = thoughtText.replace(/\s+/g, " ").trim();
-    const firstSentence = clean.split(/[.!?]\s/)[0] || clean;
-    const preview = firstSentence.length > 100 ? `${firstSentence.slice(0, 99)}…` : firstSentence;
-    return {
-      category: "reasoning",
-      categoryLabel: "Reasoning",
-      actionTitle: "Neural Reasoning",
-      shortTarget: "Plan",
-      headline: preview || "Reasoning through problem context...",
-      preview: preview || "Analyzing context...",
-      codeSnippet: summaryParts.length > 0 ? summaryParts.join("\n\n") : (entry.text || ""),
-    };
+function shortBaseName(p?: string): string {
+  if (!p) return "";
+  const s = safeStr(p).trim().replace(/^[\"']|[\"']$/g, "");
+  const segments = s.split("/").filter(Boolean);
+  return segments[segments.length - 1] || s;
+}
+
+function cleanRelativePath(p?: string): string {
+  if (!p) return "";
+  const s = safeStr(p).trim().replace(/^[\"']|[\"']$/g, "");
+  const segments = s.split("/").filter(Boolean);
+  if (segments.length > 3) {
+    return segments.slice(-3).join("/");
   }
+  return s;
+}
 
-  if (entry.kind === "userShell") {
-    const cmd = (entry.text || "").trim();
-    const shortCmd = cmd.split(/\s+/).slice(0, 2).join(" ");
-    return {
-      category: "terminal",
-      categoryLabel: "Shell",
-      actionTitle: "User Shell",
-      target: cmd,
-      shortTarget: `$ ${shortCmd}`,
-      headline: cmd ? `$ ${cmd}` : "Shell execution",
-      preview: cmd ? `$ ${cmd}` : "Terminal execution",
-      commandSnippet: cmd,
-      output: (entry.visibleOutput || "").trim(),
+export type ActivityItem =
+  | {
+      id: string;
+      kind: "explore";
+      fileCount: number;
+      folderCount: number;
+      searchCount: number;
+      details: { type: "file" | "folder" | "search"; target: string; output?: string }[];
+    }
+  | {
+      id: string;
+      kind: "command";
+      command: string;
+      count: number;
+      commands: { cmd: string; output?: string }[];
+      isLive?: boolean;
+    }
+  | {
+      id: string;
+      kind: "edit";
+      count: number;
+      files: string[];
+      details: { target: string; output?: string }[];
+    }
+  | {
+      id: string;
+      kind: "thought";
+      text: string;
+      isLive?: boolean;
+    }
+  | {
+      id: string;
+      kind: "other";
+      label: string;
+      output?: string;
     };
-  }
 
-  if (entry.kind === "toolCall") {
-    const parsed = safeParseArgs(entry.args);
-    const tool = (entry.tool || "").toLowerCase();
-    const out = (entry.visibleOutput || "").trim();
+function groupEntries(entries: ThreadItem[], live: boolean): ActivityItem[] {
+  const result: ActivityItem[] = [];
 
-    // 1. File Inspection / Reading
-    if (
-      tool === "read_file" ||
-      tool === "view_file" ||
-      tool === "readfile" ||
-      tool === "cat" ||
-      tool.includes("view") ||
-      tool.includes("read")
-    ) {
-      const raw =
-        parsed.path ||
-        parsed.AbsolutePath ||
-        parsed.TargetFile ||
-        parsed.file ||
-        parsed.filename ||
-        parsed.uri ||
-        "";
-      const target = cleanPath(raw);
-      const short = shortBaseName(raw) || "file";
-      const headline = target ? `Read ${target}` : "Inspect file";
-      return {
-        category: "file-read",
-        categoryLabel: "File Read",
-        actionTitle: "Inspect File",
-        target,
-        shortTarget: short,
-        headline,
-        preview: headline,
-        output: out,
-      };
+  let currentExplore: {
+    id: string;
+    files: Set<string>;
+    folders: Set<string>;
+    searches: Set<string>;
+    details: { type: "file" | "folder" | "search"; target: string; output?: string }[];
+  } | null = null;
+
+  let currentCommands: {
+    id: string;
+    commands: { cmd: string; output?: string }[];
+  } | null = null;
+
+  const flushExplore = () => {
+    if (currentExplore && (currentExplore.files.size > 0 || currentExplore.folders.size > 0 || currentExplore.searches.size > 0)) {
+      result.push({
+        id: currentExplore.id,
+        kind: "explore",
+        fileCount: currentExplore.files.size,
+        folderCount: currentExplore.folders.size,
+        searchCount: currentExplore.searches.size,
+        details: currentExplore.details,
+      });
     }
-
-    // 2. File Creation / Overwrite
-    if (
-      tool === "write_to_file" ||
-      tool === "write_file" ||
-      tool === "create_file" ||
-      tool === "writefile"
-    ) {
-      const raw = parsed.TargetFile || parsed.path || parsed.file || parsed.filename || "";
-      const target = cleanPath(raw);
-      const short = shortBaseName(raw) || "file";
-      const headline = target ? `Create ${target}` : "Create file";
-      return {
-        category: "file-write",
-        categoryLabel: "File Create",
-        actionTitle: "Create File",
-        target,
-        shortTarget: short,
-        headline,
-        preview: headline,
-        codeSnippet: parsed.CodeContent || parsed.content || "",
-        output: out,
-      };
-    }
-
-    // 3. File Modification / Patch
-    if (
-      tool === "replace_file_content" ||
-      tool === "edit_file" ||
-      tool === "modify_file" ||
-      tool === "patch_file" ||
-      tool.includes("replace") ||
-      tool.includes("edit")
-    ) {
-      const raw = parsed.TargetFile || parsed.path || parsed.file || parsed.filename || "";
-      const target = cleanPath(raw);
-      const short = shortBaseName(raw) || "file";
-      const headline = target ? `Edit ${target}` : "Edit file";
-      return {
-        category: "file-write",
-        categoryLabel: "File Edit",
-        actionTitle: "Edit File",
-        target,
-        shortTarget: short,
-        headline,
-        preview: headline,
-        codeSnippet: parsed.ReplacementContent || parsed.Instruction || parsed.content || "",
-        output: out,
-      };
-    }
-
-    // 4. Terminal Command Execution
-    if (
-      tool === "bash" ||
-      tool === "sh" ||
-      tool === "run_command" ||
-      tool === "exec" ||
-      tool === "execute_command" ||
-      tool.includes("command") ||
-      tool.includes("terminal")
-    ) {
-      const cmd = (parsed.CommandLine || parsed.command || parsed.cmd || parsed.raw || "").trim();
-      const preview = cmd ? `$ ${cmd.length > 70 ? cmd.slice(0, 69) + "…" : cmd}` : "Run command";
-      const shortCmd = cmd.split(/\s+/).slice(0, 2).join(" ");
-      return {
-        category: "terminal",
-        categoryLabel: "Terminal",
-        actionTitle: "Execute Command",
-        target: cmd,
-        shortTarget: `$ ${shortCmd || "cmd"}`,
-        headline: cmd ? `$ ${cmd}` : "Execute command",
-        preview,
-        commandSnippet: cmd,
-        output: out,
-      };
-    }
-
-    // 5. Codebase Search
-    if (
-      tool === "grep_search" ||
-      tool === "search_files" ||
-      tool === "ripgrep" ||
-      tool === "grep" ||
-      tool.includes("grep")
-    ) {
-      const query = parsed.Query || parsed.query || parsed.pattern || "";
-      const headline = query ? `Search for "${query}"` : "Search codebase";
-      return {
-        category: "search",
-        categoryLabel: "Grep Search",
-        actionTitle: "Search Codebase",
-        target: query,
-        shortTarget: query ? `"${query.slice(0, 14)}"` : "Search",
-        headline,
-        preview: headline,
-        output: out,
-      };
-    }
-
-    if (tool === "find_by_name" || tool === "find_files" || tool === "fd" || tool.includes("find")) {
-      const pat = parsed.Pattern || parsed.pattern || "";
-      const headline = pat ? `Find "${pat}"` : "Find files";
-      return {
-        category: "search",
-        categoryLabel: "Find Files",
-        actionTitle: "Find Files",
-        target: pat,
-        shortTarget: pat ? pat.slice(0, 14) : "Find",
-        headline,
-        preview: headline,
-        output: out,
-      };
-    }
-
-    if (tool === "list_dir" || tool === "ls" || tool.includes("list_dir")) {
-      const raw = parsed.DirectoryPath || parsed.path || "";
-      const target = cleanPath(raw);
-      const short = shortBaseName(raw) || "dir";
-      const headline = target ? `List ${target}` : "List directory";
-      return {
-        category: "search",
-        categoryLabel: "Directory",
-        actionTitle: "List Directory",
-        target,
-        shortTarget: short,
-        headline,
-        preview: headline,
-        output: out,
-      };
-    }
-
-    // 6. Web & Documentation
-    if (tool.includes("web") || tool.includes("url") || tool.includes("browser") || tool.includes("fetch")) {
-      const q = parsed.query || parsed.Url || parsed.url || "";
-      const headline = q ? `Web: ${q}` : "Web search";
-      return {
-        category: "web",
-        categoryLabel: "Web Research",
-        actionTitle: "Web Search",
-        target: q,
-        shortTarget: "Web",
-        headline,
-        preview: headline,
-        output: out,
-      };
-    }
-
-    // Fallback tool call
-    const desc = parsed.description || parsed.command || (typeof entry.args === "string" && entry.args.length < 60 ? entry.args : "");
-    const headline = desc ? `${entry.tool}: ${desc}` : (entry.tool || "Tool execution");
-    return {
-      category: "other",
-      categoryLabel: entry.tool || "Tool",
-      actionTitle: entry.tool || "Tool Call",
-      target: desc,
-      shortTarget: entry.tool || "Tool",
-      headline,
-      preview: headline,
-      output: out,
-    };
-  }
-
-  // Generic intermediate items
-  const clean = (entry.text || entry.fallbackText || "").replace(/\s+/g, " ").trim();
-  const label = entry.kind || "Activity";
-  return {
-    category: "other",
-    categoryLabel: label,
-    actionTitle: label,
-    shortTarget: label,
-    headline: clean || label,
-    preview: clean.length > 70 ? `${clean.slice(0, 69)}…` : (clean || label),
-    output: (entry.visibleOutput || "").trim(),
+    currentExplore = null;
   };
-}
 
-function CategoryIcon({ category }: { category: ToolCategory }) {
-  switch (category) {
-    case "file-read":
-      return <FileTextIcon size={13} />;
-    case "file-write":
-      return <CodeIcon size={13} />;
-    case "terminal":
-      return <TerminalIcon size={13} />;
-    case "search":
-      return <SearchIcon size={13} />;
-    case "web":
-      return <GlobeIcon size={13} />;
-    case "reasoning":
-      return <SparklesIcon size={13} />;
-    default:
-      return <CpuIcon size={13} />;
+  const flushCommands = () => {
+    if (currentCommands && currentCommands.commands.length > 0) {
+      const cmds = currentCommands.commands;
+      result.push({
+        id: currentCommands.id,
+        kind: "command",
+        command: cmds[cmds.length - 1].cmd,
+        count: cmds.length,
+        commands: cmds,
+      });
+    }
+    currentCommands = null;
+  };
+
+  for (let idx = 0; idx < entries.length; idx++) {
+    const entry = entries[idx];
+    const isLatest = idx === entries.length - 1;
+    const isLiveStep = live && isLatest;
+
+    // 1. Reasoning / Thought Text
+    if (entry.kind === "reasoning") {
+      flushExplore();
+      flushCommands();
+      const parts = (entry.summary || []).filter((s) => s && safeStr(s).trim());
+      const rawText = parts.length > 0 ? parts.join("\n\n") : safeStr(entry.text);
+      const text = rawText.trim();
+      if (text) {
+        result.push({
+          id: entry.itemId ? `${entry.itemId}-${idx}` : `thought-${idx}`,
+          kind: "thought",
+          text,
+          isLive: isLiveStep,
+        });
+      }
+      continue;
+    }
+
+    // 2. Shell Execution via userShell
+    if (entry.kind === "userShell") {
+      flushExplore();
+      const cmd = safeStr(entry.text).trim();
+      if (!currentCommands) {
+        currentCommands = {
+          id: entry.itemId ? `${entry.itemId}-${idx}` : `cmd-${idx}`,
+          commands: [],
+        };
+      }
+      currentCommands.commands.push({ cmd: cmd || "command", output: safeStr(entry.visibleOutput) });
+      continue;
+    }
+
+    // 3. Tool Calls
+    if (entry.kind === "toolCall") {
+      const tool = safeStr(entry.tool).toLowerCase();
+      const parsed = safeParseArgs(entry.args);
+      const out = safeStr(entry.visibleOutput);
+
+      // A. Terminal commands
+      if (
+        tool === "bash" ||
+        tool === "sh" ||
+        tool === "run_command" ||
+        tool === "exec" ||
+        tool === "execute_command" ||
+        tool.includes("terminal") ||
+        tool.includes("command")
+      ) {
+        flushExplore();
+        const cmd = safeStr(parsed.CommandLine || parsed.command || parsed.cmd || parsed.raw).trim();
+        if (!currentCommands) {
+          currentCommands = {
+            id: entry.itemId ? `${entry.itemId}-${idx}` : `cmd-${idx}`,
+            commands: [],
+          };
+        }
+        currentCommands.commands.push({ cmd: cmd || tool, output: out });
+        continue;
+      }
+
+      // B. File reads / inspections
+      if (
+        tool === "read_file" ||
+        tool === "view_file" ||
+        tool === "readfile" ||
+        tool === "cat" ||
+        tool.includes("view") ||
+        tool.includes("read")
+      ) {
+        flushCommands();
+        const raw = safeStr(parsed.path || parsed.AbsolutePath || parsed.TargetFile || parsed.file || parsed.filename || parsed.uri);
+        const target = cleanRelativePath(raw) || "file";
+        if (!currentExplore) {
+          currentExplore = {
+            id: entry.itemId ? `${entry.itemId}-${idx}` : `explore-${idx}`,
+            files: new Set(),
+            folders: new Set(),
+            searches: new Set(),
+            details: [],
+          };
+        }
+        currentExplore.files.add(target);
+        currentExplore.details.push({ type: "file", target, output: out });
+        continue;
+      }
+
+      // C. Directory listings
+      if (tool === "list_dir" || tool === "ls" || tool.includes("list_dir")) {
+        flushCommands();
+        const raw = safeStr(parsed.DirectoryPath || parsed.path);
+        const target = cleanRelativePath(raw) || "folder";
+        if (!currentExplore) {
+          currentExplore = {
+            id: entry.itemId ? `${entry.itemId}-${idx}` : `explore-${idx}`,
+            files: new Set(),
+            folders: new Set(),
+            searches: new Set(),
+            details: [],
+          };
+        }
+        currentExplore.folders.add(target);
+        currentExplore.details.push({ type: "folder", target, output: out });
+        continue;
+      }
+
+      // D. Grep / Find / Codebase Search
+      if (
+        tool === "grep_search" ||
+        tool === "search_files" ||
+        tool === "ripgrep" ||
+        tool === "grep" ||
+        tool === "find_by_name" ||
+        tool === "find_files" ||
+        tool === "fd" ||
+        tool.includes("grep") ||
+        tool.includes("find") ||
+        tool.includes("search")
+      ) {
+        flushCommands();
+        const q = safeStr(parsed.Query || parsed.query || parsed.pattern || parsed.Pattern || "search");
+        if (!currentExplore) {
+          currentExplore = {
+            id: entry.itemId ? `${entry.itemId}-${idx}` : `explore-${idx}`,
+            files: new Set(),
+            folders: new Set(),
+            searches: new Set(),
+            details: [],
+          };
+        }
+        currentExplore.searches.add(q);
+        currentExplore.details.push({ type: "search", target: q, output: out });
+        continue;
+      }
+
+      // E. File writes / Edits
+      if (
+        tool === "write_to_file" ||
+        tool === "write_file" ||
+        tool === "replace_file_content" ||
+        tool === "edit_file" ||
+        tool.includes("edit") ||
+        tool.includes("write")
+      ) {
+        flushExplore();
+        flushCommands();
+        const raw = safeStr(parsed.TargetFile || parsed.path || parsed.file);
+        const short = shortBaseName(raw) || "file";
+        result.push({
+          id: entry.itemId ? `${entry.itemId}-${idx}` : `edit-${idx}`,
+          kind: "edit",
+          count: 1,
+          files: [short],
+          details: [{ target: short, output: out }],
+        });
+        continue;
+      }
+
+      // F. Generic / other tools
+      flushExplore();
+      flushCommands();
+      result.push({
+        id: entry.itemId ? `${entry.itemId}-${idx}` : `tool-${idx}`,
+        kind: "other",
+        label: tool || "Action",
+        output: out,
+      });
+      continue;
+    }
+
+    // 4. Other general items
+    flushExplore();
+    flushCommands();
+    const clean = safeStr(entry.text || entry.fallbackText).trim();
+    if (clean) {
+      result.push({
+        id: entry.itemId ? `${entry.itemId}-${idx}` : `item-${idx}`,
+        kind: "other",
+        label: clean,
+        output: safeStr(entry.visibleOutput),
+      });
+    }
   }
+
+  flushExplore();
+  flushCommands();
+
+  return result;
 }
 
-function TruncatedOutput({
-  text,
-  maxLines = 5,
-  live = false,
-}: {
-  text: string;
-  maxLines?: number;
-  live?: boolean;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const scrollRef = useRef<HTMLPreElement>(null);
-  const lines = useMemo(() => text.split("\n"), [text]);
-  const isLong = lines.length > maxLines;
-
-  // Auto-scroll output container smoothly while live streaming new output lines
-  useEffect(() => {
-    if (live && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [text, live]);
-
-  const display = useMemo(() => {
-    if (!isLong || expanded) return text;
-    // When live and long, show the active recent tail lines so the user sees live streaming updates
-    if (live) {
-      return "…\n" + lines.slice(-maxLines).join("\n");
-    }
-    return lines.slice(0, maxLines).join("\n") + "\n…";
-  }, [text, isLong, expanded, lines, maxLines, live]);
-
-  return (
-    <div className={`step-output-container ${live ? "is-live-output" : ""}`}>
-      <div className="step-output-label-bar">
-        <span className="step-output-label">
-          {live ? "Live Output Stream" : "Output"} ({lines.length} line{lines.length === 1 ? "" : "s"})
-        </span>
-        {isLong && (
-          <button
-            type="button"
-            className="step-output-toggle-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              setExpanded((v) => !v);
-            }}
-          >
-            {expanded ? "Collapse" : `Show all (+${lines.length - maxLines} lines)`}
-          </button>
-        )}
-      </div>
-      <pre
-        ref={scrollRef}
-        className={`step-output-text-3d font-mono ${expanded ? "is-expanded" : ""} ${live ? "is-live-stream" : ""}`}
-      >
-        {display}
-        {live && <span className="stream-cursor-pulse font-mono" aria-hidden="true">▍</span>}
-      </pre>
-    </div>
-  );
+interface ThinkingBlockProps {
+  entries: ThreadItem[];
+  streamingId: string | null;
+  isLive?: boolean;
+  onStop?: () => void;
 }
-
-const ThinkingTimer = function ThinkingTimer({ live }: { live: boolean }) {
-  const [elapsed, setElapsed] = useState(0);
-  useEffect(() => {
-    if (!live) return;
-    const t0 = Date.now();
-    setElapsed(0);
-    const interval = setInterval(() => {
-      setElapsed(Math.max(1, Math.round((Date.now() - t0) / 1000)));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [live]);
-
-  if (!live && elapsed === 0) return null;
-  return <span className="thinking-duration font-mono">{elapsed}s</span>;
-};
-
-interface StepRowProps {
-  entry: ThreadItem;
-  index: number;
-  isLast: boolean;
-  onCopy: (id: string, text: string) => void;
-  isCopied: boolean;
-}
-
-const CompletedStepRow = memo(function CompletedStepRow({
-  entry,
-  index,
-  isLast,
-  onCopy,
-  isCopied,
-}: StepRowProps) {
-  const [detailOpen, setDetailOpen] = useState(false);
-  const act = useMemo(() => humanizeAction(entry), [entry]);
-  const copyContent = act.commandSnippet || act.codeSnippet || act.output || act.headline;
-
-  return (
-    <div className="vertical-step-row is-completed">
-      <div className="step-gutter-col">
-        <div className="step-bullet-node completed" title="Step completed">
-          <CheckIcon size={10} />
-        </div>
-        {!isLast && <div className="step-gutter-line" />}
-      </div>
-
-      <div className="step-card-col">
-        <div
-          className="step-compact-header"
-          onClick={() => setDetailOpen((v) => !v)}
-          title="Click to toggle details"
-        >
-          <span className="step-index-badge font-mono">{String(index + 1).padStart(2, "0")}</span>
-          <span className={`step-cat-pill cat-${act.category}`}>
-            <CategoryIcon category={act.category} />
-            <span>{act.categoryLabel}</span>
-          </span>
-          <span className="step-headline-text font-mono" title={act.headline}>
-            {act.headline}
-          </span>
-          <div className="spacer" />
-          {copyContent && (
-            <button
-              type="button"
-              className="step-micro-copy-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                onCopy(entry.itemId, copyContent);
-              }}
-              title="Copy output"
-            >
-              {isCopied ? <CheckIcon size={11} /> : <CopyIcon size={11} />}
-            </button>
-          )}
-          <span className="step-chevron-icon">
-            <ChevronRightIcon size={12} className={detailOpen ? "is-rotated" : ""} />
-          </span>
-        </div>
-
-        {detailOpen && (
-          <div className="step-details-drawer">
-            {act.category === "reasoning" ? (
-              <div className="completed-reasoning-drawer-text font-sans">
-                {act.codeSnippet || act.headline}
-              </div>
-            ) : (
-              <>
-                {act.commandSnippet && (
-                  <div className="step-terminal-block-3d">
-                    <span className="terminal-prompt">$</span>
-                    <pre className="terminal-cmd-text font-mono">{act.commandSnippet}</pre>
-                  </div>
-                )}
-                {act.codeSnippet && !act.commandSnippet && (
-                  <pre className="step-code-snippet-3d font-mono">{act.codeSnippet}</pre>
-                )}
-                {act.output && <TruncatedOutput text={act.output} maxLines={4} live={false} />}
-              </>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-});
-
-const HeroActiveStepCard = memo(function HeroActiveStepCard({
-  entry,
-  index,
-  live,
-  hasStepsBelow,
-  onCopy,
-  isCopied,
-}: {
-  entry: ThreadItem;
-  index: number;
-  live: boolean;
-  hasStepsBelow: boolean;
-  onCopy: (id: string, text: string) => void;
-  isCopied: boolean;
-}) {
-  const act = useMemo(() => humanizeAction(entry), [entry]);
-  const copyContent = act.commandSnippet || act.codeSnippet || act.output || act.headline;
-
-  return (
-    <div className={`vertical-step-row is-hero ${live ? "hero-live" : "hero-settled"}`}>
-      <div className="step-gutter-col">
-        <div className={`step-bullet-node hero ${live ? "pulse-active" : "node-done"}`}>
-          {live ? (
-            <span className="hero-bullet-glow-dot" />
-          ) : (
-            <CheckIcon size={11} />
-          )}
-        </div>
-        {hasStepsBelow && <div className="step-gutter-line hero-connector-line" />}
-      </div>
-
-      <div className="step-hero-card-3d">
-        {/* Specular Edge Glow on Active Hero */}
-        {live && <div className="hero-specular-edge-glow" />}
-
-        <div className="hero-card-header-bar">
-          <div className="hero-header-meta">
-            <div className={`hero-category-chip cat-${act.category}`}>
-              <CategoryIcon category={act.category} />
-              <span>{act.categoryLabel}</span>
-            </div>
-            <span className="hero-step-counter-tag font-mono">
-              {live ? `STEP ${String(index + 1).padStart(2, "0")} • ACTIVE` : `STEP ${String(index + 1).padStart(2, "0")}`}
-            </span>
-          </div>
-
-          <div className="hero-header-controls">
-            {live && (
-              <div className="hero-audio-equalizer" aria-label="Running">
-                <span className="hero-bar hb1" />
-                <span className="hero-bar hb2" />
-                <span className="hero-bar hb3" />
-                <span className="hero-bar hb4" />
-              </div>
-            )}
-            {copyContent && (
-              <button
-                type="button"
-                className="step-copy-btn hero-copy-action"
-                onClick={() => onCopy(entry.itemId, copyContent)}
-                title="Copy step output"
-              >
-                {isCopied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
-                <span>{isCopied ? "Copied" : "Copy"}</span>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Hero Content: Dedicated Reasoning Stream or Tool Execution */}
-        {act.category === "reasoning" ? (
-          <div className="hero-reasoning-flow-card">
-            <div className="hero-reasoning-headline-row">
-              <SparklesIcon size={13} className={live ? "sparkle-spin" : ""} />
-              <span className="hero-reasoning-summary-headline">
-                {act.headline}
-              </span>
-              {live && <span className="neural-live-badge">THINKING</span>}
-            </div>
-            {act.codeSnippet && (
-              <div className="hero-reasoning-stream-content">
-                <span className="reasoning-body-text">{act.codeSnippet}</span>
-                {live && <span className="stream-cursor-pulse" aria-hidden="true">▍</span>}
-              </div>
-            )}
-          </div>
-        ) : (
-          <>
-            {/* Hero Title & Target */}
-            <div className="hero-headline-block">
-              <span className="hero-action-title">{act.actionTitle}</span>
-              {act.target && (
-                <span className="hero-target-badge font-mono" title={act.target}>
-                  {act.target}
-                </span>
-              )}
-            </div>
-
-            {/* Command Box if Terminal */}
-            {act.commandSnippet && (
-              <div className="step-terminal-block-3d hero-terminal-view">
-                <span className="terminal-prompt">$</span>
-                <pre className="terminal-cmd-text font-mono">{act.commandSnippet}</pre>
-              </div>
-            )}
-
-            {/* Code Snippet if File Edit */}
-            {act.codeSnippet && !act.commandSnippet && (
-              <pre className="step-code-snippet-3d hero-code-view font-mono">{act.codeSnippet}</pre>
-            )}
-
-            {/* Output View with Line Cap and Live Scrolling */}
-            {act.output && (
-              <TruncatedOutput text={act.output} maxLines={5} live={live} />
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  );
-});
 
 export default function ThinkingBlock({
   entries,
   streamingId,
-  defaultOpen,
-}: {
-  entries: ThreadItem[];
-  streamingId: string | null;
-  defaultOpen?: boolean;
-}) {
-  const [collapsed, setCollapsed] = useState(defaultOpen === false);
-  const [showAllEarlier, setShowAllEarlier] = useState(false);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const seenCount = useRef(entries.length);
+  isLive,
+  onStop,
+}: ThinkingBlockProps) {
+  const live = isLive !== undefined ? isLive : thinkingLive(entries, streamingId);
+  const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
+  const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
 
-  const live = thinkingLive(entries, streamingId);
+  // Duration timer
+  const [seconds, setSeconds] = useState(0);
+  const startRef = useRef<number | null>(null);
 
-  // Auto-scroll timeline smoothly when streaming new entries - keeps latest step at the top visible!
   useEffect(() => {
-    const el = bodyRef.current;
-    if (collapsed || !el || entries.length === seenCount.current) return;
-    seenCount.current = entries.length;
-    el.scrollTo({ top: 0, behavior: "smooth" });
-  }, [entries.length, collapsed]);
+    if (live) {
+      if (!startRef.current) startRef.current = Date.now();
+      const id = setInterval(() => {
+        if (startRef.current) {
+          setSeconds(Math.max(1, Math.round((Date.now() - startRef.current) / 1000)));
+        }
+      }, 1000);
+      return () => clearInterval(id);
+    }
+  }, [live]);
 
-  // Copy helper
-  const copyText = useCallback((id: string, text: string) => {
-    navigator.clipboard?.writeText(text).then(() => {
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 1400);
-    });
-  }, []);
+  // While live: expand by default so user sees activity.
+  // When done: collapse into one clean line unless user opened it.
+  const isExpanded = live ? (userExpanded !== false) : (userExpanded === true);
+
+  const activities = useMemo(() => groupEntries(entries, live), [entries, live]);
+
+  const toggleItem = (id: string) => {
+    setExpandedItems((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
 
   if (!entries || entries.length === 0) return null;
 
-  const total = entries.length;
-  const latestIndex = total - 1;
-  const latestEntry = entries[latestIndex];
-
-  // All previous entries (everything except latestIndex), paired with their original 0-based index
-  const allPrevious = useMemo(() => {
-    if (total <= 1) return [];
-    return entries.slice(0, latestIndex).map((item, originalIdx) => ({
-      item,
-      originalIndex: originalIdx,
-    }));
-  }, [entries, latestIndex, total]);
-
-  // Show previous steps in reverse-chronological order (most recent first, directly under the Hero step)
-  const reversedPrevious = useMemo(() => {
-    return [...allPrevious].reverse();
-  }, [allPrevious]);
-
-  // If there are more than 2 previous steps, fold earlier ones cleanly
-  const hasHiddenEarlier = reversedPrevious.length > 2 && !showAllEarlier;
-  const visiblePrevious = useMemo(() => {
-    if (!hasHiddenEarlier) return reversedPrevious;
-    return reversedPrevious.slice(0, 2);
-  }, [reversedPrevious, hasHiddenEarlier]);
-
-  const hiddenCount = hasHiddenEarlier ? reversedPrevious.length - 2 : 0;
-
-  // Highlights summary for settled title
-  const settledSummary = useMemo(() => {
-    if (!entries || entries.length === 0) return "";
-    const counts: Record<string, number> = {};
-    for (const it of entries) {
-      const act = humanizeAction(it);
-      counts[act.category] = (counts[act.category] || 0) + 1;
+  // Format elapsed time string like Antigravity: "Worked for 8m" or "Thought for 12s"
+  const timeLabel = useMemo(() => {
+    const s = Math.max(1, seconds);
+    const timeFormatted = s >= 60 ? `${Math.floor(s / 60)}m` : `${s}s`;
+    if (live) {
+      return `Thinking for ${timeFormatted}...`;
     }
-    const parts: string[] = [];
-    if (counts["file-read"]) parts.push(`${counts["file-read"]} file${counts["file-read"] > 1 ? "s" : ""} read`);
-    if (counts["file-write"]) parts.push(`${counts["file-write"]} file${counts["file-write"] > 1 ? "s" : ""} edited`);
-    if (counts["terminal"]) parts.push(`${counts["terminal"]} command${counts["terminal"] > 1 ? "s" : ""}`);
-    if (counts["search"]) parts.push(`${counts["search"]} search${counts["search"] > 1 ? "es" : ""}`);
-    if (counts["reasoning"]) parts.push(`${counts["reasoning"]} reasoning step${counts["reasoning"] > 1 ? "s" : ""}`);
-    if (parts.length > 0) return parts.join(" • ");
-    return "Synthesized reasoning and executed actions";
-  }, [entries]);
+    return s >= 60 ? `Worked for ${timeFormatted}` : `Thought for ${timeFormatted}`;
+  }, [live, seconds]);
 
   return (
-    <div className={`thinking-card-3d ${live ? "is-live" : "is-settled"} ${collapsed ? "is-collapsed" : "is-open"}`}>
-      {/* Specular Ambient Edge */}
-      <div className="thinking-card-specular-edge" />
-
-      {/* Header Bar */}
-      <div className="thinking-header-row">
+    <div className="antigravity-thinking-block">
+      {/* Top Main Header Line: "Worked for 8m ⌄" or "Thinking for 12s... ⌄" */}
+      <div className="antigravity-header-row">
         <button
           type="button"
-          className="thinking-header-main-btn"
-          onClick={() => setCollapsed((v) => !v)}
-          aria-expanded={!collapsed}
-          title={collapsed ? "Click to expand thinking steps" : "Click to collapse thinking steps"}
+          className="antigravity-thinking-header"
+          onClick={() => setUserExpanded((prev) => (prev === null ? !isExpanded : !prev))}
+          aria-expanded={isExpanded}
         >
-          <div className="thinking-indicator-badge">
-            {live ? (
-              <div className="neural-frequency-rings" aria-label="Muse is reasoning">
-                <span className="ring-pulse r1" />
-                <span className="ring-pulse r2" />
-                <span className="core-dot" />
-              </div>
-            ) : (
-              <div className="thinking-done-badge-3d" title="Reasoning completed">
-                <CheckIcon size={11} />
-              </div>
-            )}
-          </div>
-
-          <div className="thinking-summary-meta">
-            <div className="thinking-headline">
-              <span className="thinking-title">
-                {live ? "Muse is reasoning..." : "Reasoned"}
-              </span>
-
-              <ThinkingTimer live={live} />
-
-              <span className="thinking-step-count font-mono">
-                {entries.length} step{entries.length === 1 ? "" : "s"}
-              </span>
-            </div>
-
-            {!live && (
-              <span className="thinking-preview-text settled" title={settledSummary}>
-                {settledSummary}
-              </span>
-            )}
-          </div>
-
-          <div className="thinking-header-right-actions">
-            <span className="thinking-view-steps-hint">
-              {collapsed ? `View timeline (${entries.length})` : "Collapse"}
-            </span>
-            <div className="thinking-expand-icon">
-              <ChevronRightIcon size={14} className={collapsed ? "" : "is-expanded-rotate"} />
-            </div>
-          </div>
+          {live && <span className="antigravity-live-dot" />}
+          <span className="antigravity-header-label">{timeLabel}</span>
+          {isExpanded ? (
+            <ChevronDownIcon size={12} className="antigravity-header-chevron" />
+          ) : (
+            <ChevronRightIcon size={12} className="antigravity-header-chevron" />
+          )}
         </button>
+
+        {live && onStop && (
+          <button
+            type="button"
+            className="antigravity-stop-btn"
+            onClick={onStop}
+            title="Interrupt reasoning"
+          >
+            <StopIcon size={10} />
+            <span>Stop</span>
+          </button>
+        )}
       </div>
 
-      {/* Vertical Steps Stream: Latest Hero Step on TOP, followed by completed steps below */}
-      {!collapsed && (
-        <div ref={bodyRef} className="vertical-thinking-timeline-flow">
-          {/* 1. HERO LATEST / ACTIVE STEP AT THE TOP */}
-          {latestEntry && (
-            <HeroActiveStepCard
-              key={latestEntry.itemId}
-              entry={latestEntry}
-              index={latestIndex}
-              live={live}
-              hasStepsBelow={allPrevious.length > 0}
-              onCopy={copyText}
-              isCopied={copiedId === latestEntry.itemId}
-            />
-          )}
+      {/* Expanded Activity List */}
+      {isExpanded && (
+        <div className="antigravity-thinking-content">
+          {activities.map((act, index) => {
+            const isLast = index === activities.length - 1;
+            // Auto-expand last command if live
+            const itemOpen = expandedItems[act.id] ?? (live && isLast && act.kind === "command");
 
-          {/* 2. COMPLETED STEPS SECTION (Below Hero) */}
-          {allPrevious.length > 0 && (
-            <div className="previous-steps-section">
-              <div className="previous-steps-divider">
-                <div className="prev-steps-label">
-                  <span className="prev-steps-label-text">Completed steps</span>
-                  <span className="prev-steps-count font-mono">{allPrevious.length}</span>
+            if (act.kind === "thought") {
+              return (
+                <div key={act.id} className="antigravity-thought-paragraph">
+                  <span>{act.text}</span>
+                  {act.isLive && <span className="antigravity-thought-cursor">▍</span>}
                 </div>
-                {reversedPrevious.length > 2 && (
-                  <button
-                    type="button"
-                    className="prev-steps-toggle-btn"
-                    onClick={() => setShowAllEarlier((v) => !v)}
+              );
+            }
+
+            if (act.kind === "explore") {
+              const parts: React.ReactNode[] = [];
+              if (act.fileCount > 0) {
+                parts.push(
+                  <span key="f">
+                    <strong className="count-bold">{act.fileCount}</strong> file{act.fileCount > 1 ? "s" : ""}
+                  </span>
+                );
+              }
+              if (act.folderCount > 0) {
+                parts.push(
+                  <span key="d">
+                    <strong className="count-bold">{act.folderCount}</strong> folder{act.folderCount > 1 ? "s" : ""}
+                  </span>
+                );
+              }
+              if (act.searchCount > 0) {
+                parts.push(
+                  <span key="s">
+                    <strong className="count-bold">{act.searchCount}</strong> search{act.searchCount > 1 ? "es" : ""}
+                  </span>
+                );
+              }
+
+              return (
+                <div key={act.id} className="antigravity-activity-item">
+                  <div
+                    className="antigravity-activity-row"
+                    onClick={() => toggleItem(act.id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") toggleItem(act.id);
+                    }}
                   >
-                    {showAllEarlier
-                      ? "Show fewer"
-                      : `+ ${hiddenCount} more step${hiddenCount > 1 ? "s" : ""}`}
-                  </button>
+                    <span>Explored </span>
+                    {parts.map((p, i) => (
+                      <React.Fragment key={i}>
+                        {i > 0 && <span>, </span>}
+                        {p}
+                      </React.Fragment>
+                    ))}
+                    {itemOpen ? (
+                      <ChevronDownIcon size={11} className="row-chevron" />
+                    ) : (
+                      <ChevronRightIcon size={11} className="row-chevron" />
+                    )}
+                  </div>
+
+                  {itemOpen && (
+                    <div className="antigravity-explore-box">
+                      {act.details.map((d, i) => (
+                        <div key={i} className="antigravity-explore-item">
+                          <span className="antigravity-explore-type">{d.type}</span>
+                          <span className="antigravity-explore-path">{d.target}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            if (act.kind === "command") {
+              const isSingle = act.count === 1;
+              const cmdLabel = isSingle ? act.command : `${act.count} commands`;
+
+              return (
+                <div key={act.id} className="antigravity-activity-item">
+                  <div
+                    className="antigravity-activity-row"
+                    onClick={() => toggleItem(act.id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") toggleItem(act.id);
+                    }}
+                  >
+                    <span>Ran </span>
+                    {isSingle ? (
+                      <code className="cmd-name">{cmdLabel}</code>
+                    ) : (
+                      <span className="count-bold">{cmdLabel}</span>
+                    )}
+                    {itemOpen ? (
+                      <ChevronDownIcon size={11} className="row-chevron" />
+                    ) : (
+                      <ChevronRightIcon size={11} className="row-chevron" />
+                    )}
+                  </div>
+
+                  {itemOpen && (
+                    <div className="antigravity-cmd-group">
+                      {act.commands.map((c, i) => (
+                        <div key={i} className="antigravity-cmd-box">
+                          <div className="antigravity-cmd-line">
+                            <span className="antigravity-prompt-path">~/.../openmuse</span>
+                            <span className="antigravity-dollar">$</span>
+                            <span className="antigravity-cmd-text">{c.cmd}</span>
+                          </div>
+                          {c.output && (
+                            <pre className="antigravity-output-pre">{c.output}</pre>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            if (act.kind === "edit") {
+              const editLabel = act.count === 1 ? act.files[0] : `${act.count} files`;
+              return (
+                <div key={act.id} className="antigravity-activity-item">
+                  <div
+                    className="antigravity-activity-row"
+                    onClick={() => toggleItem(act.id)}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <span>Edited </span>
+                    <strong className="count-bold">{editLabel}</strong>
+                    {itemOpen ? (
+                      <ChevronDownIcon size={11} className="row-chevron" />
+                    ) : (
+                      <ChevronRightIcon size={11} className="row-chevron" />
+                    )}
+                  </div>
+                  {itemOpen && (
+                    <div className="antigravity-explore-box">
+                      {act.details.map((d, i) => (
+                        <div key={i} className="antigravity-explore-item">
+                          <span className="antigravity-explore-type">file</span>
+                          <span className="antigravity-explore-path">{d.target}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            // Other fallback
+            return (
+              <div key={act.id} className="antigravity-activity-item">
+                <div
+                  className="antigravity-activity-row"
+                  onClick={() => toggleItem(act.id)}
+                  role="button"
+                  tabIndex={0}
+                >
+                  <span>{act.label}</span>
+                  {act.output && (
+                    itemOpen ? (
+                      <ChevronDownIcon size={11} className="row-chevron" />
+                    ) : (
+                      <ChevronRightIcon size={11} className="row-chevron" />
+                    )
+                  )}
+                </div>
+                {itemOpen && act.output && (
+                  <pre className="antigravity-output-pre">{act.output}</pre>
                 )}
               </div>
-
-              <div className="previous-steps-list">
-                {visiblePrevious.map((entry, idx) => {
-                  const isLast = idx === visiblePrevious.length - 1 && !hasHiddenEarlier;
-                  return (
-                    <CompletedStepRow
-                      key={entry.item.itemId}
-                      entry={entry.item}
-                      index={entry.originalIndex}
-                      isLast={isLast}
-                      onCopy={copyText}
-                      isCopied={copiedId === entry.item.itemId}
-                    />
-                  );
-                })}
-              </div>
-
-              {hasHiddenEarlier && (
-                <div className="earlier-steps-toggle-row">
-                  <button
-                    type="button"
-                    className="earlier-steps-toggle-btn"
-                    onClick={() => setShowAllEarlier(true)}
-                  >
-                    ▼ View {hiddenCount} earlier completed step{hiddenCount > 1 ? "s" : ""}
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+            );
+          })}
         </div>
       )}
     </div>

@@ -23,16 +23,21 @@ export interface ThreadItem {
 export type Block =
   | { type: "user"; item: ThreadItem }
   | { type: "agent"; item: ThreadItem }
-  | { type: "thinking"; key: string; entries: ThreadItem[] };
+  | { type: "thinking"; key: string; entries: ThreadItem[]; isLive?: boolean };
 
 export function isMessage(item: ThreadItem): boolean {
   return item.kind === "userMessage" || item.kind === "agentMessage";
 }
 
+export interface GroupThreadOptions {
+  busy?: boolean;
+  streamingId?: string | null;
+}
+
 // Collapse each consecutive run of intermediate items into one thinking
 // block. Messages break runs, so an agent reply between two tool phases
 // yields block → message → block, preserving chronological order.
-export function groupThread(items: ThreadItem[]): Block[] {
+export function groupThread(items: ThreadItem[], options?: GroupThreadOptions): Block[] {
   const blocks: Block[] = [];
   let open: ThreadItem[] | null = null;
   let openKey = "";
@@ -56,6 +61,56 @@ export function groupThread(items: ThreadItem[]): Block[] {
     }
   }
   flush();
+
+  // If busy, determine whether the last thinking phase is active,
+  // or synthesize an active planning block if the model is currently formulating
+  if (options?.busy) {
+    const lastBlock = blocks[blocks.length - 1];
+    if (lastBlock && lastBlock.type === "user") {
+      // User just sent message, model is formulating response
+      blocks.push({
+        type: "thinking",
+        key: "think-live-active",
+        entries: [
+          {
+            itemId: "live-planning-head",
+            kind: "reasoning",
+            text: "Formulating plan & synthesizing context...",
+            status: "inProgress",
+            summary: ["Formulating plan & synthesizing context..."],
+            done: false,
+          },
+        ],
+        isLive: true,
+      });
+    }
+  }
+
+  // Calculate isLive for each thinking block
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    if (b.type === "thinking") {
+      if (b.isLive !== undefined) continue;
+      const hasInProgress = b.entries.some((e) => e.status === "inProgress");
+      const isCurrentlyStreaming = !!(options?.streamingId && b.entries.some((e) => e.itemId === options.streamingId));
+
+      let live = hasInProgress || isCurrentlyStreaming;
+
+      // If session is busy, check if this thinking block has NOT been followed by an agent message that has delivered text
+      if (!live && options?.busy) {
+        const subsequent = blocks.slice(i + 1);
+        const agentHasStarted = subsequent.some(
+          (next) => next.type === "agent" && ((next.item.text && next.item.text.trim().length > 0) || next.item.done)
+        );
+        if (!agentHasStarted) {
+          live = true;
+        }
+      }
+
+      b.isLive = live;
+    }
+  }
+
   return blocks;
 }
 
