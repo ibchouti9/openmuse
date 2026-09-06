@@ -53,11 +53,13 @@ function shortBaseName(p?: string): string {
   return segments[segments.length - 1] || s;
 }
 
-function safeParseArgs(raw?: string): Record<string, any> {
+function safeParseArgs(raw?: any): Record<string, any> {
   if (!raw) return {};
-  if (typeof raw !== "string") return raw;
+  if (typeof raw === "object") return raw;
+  if (typeof raw !== "string") return {};
   try {
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null ? parsed : { raw };
   } catch {
     return { raw };
   }
@@ -647,6 +649,8 @@ export default function ThinkingBlock({
     });
   }, []);
 
+  if (!entries || entries.length === 0) return null;
+
   const total = entries.length;
   const latestIndex = total - 1;
   const latestEntry = entries[latestIndex];
@@ -676,7 +680,7 @@ export default function ThinkingBlock({
 
   // Highlights summary for settled title
   const settledSummary = useMemo(() => {
-    if (entries.length === 0) return "";
+    if (!entries || entries.length === 0) return "";
     const counts: Record<string, number> = {};
     for (const it of entries) {
       const act = humanizeAction(it);
@@ -687,8 +691,9 @@ export default function ThinkingBlock({
     if (counts["file-write"]) parts.push(`${counts["file-write"]} file${counts["file-write"] > 1 ? "s" : ""} edited`);
     if (counts["terminal"]) parts.push(`${counts["terminal"]} command${counts["terminal"] > 1 ? "s" : ""}`);
     if (counts["search"]) parts.push(`${counts["search"]} search${counts["search"] > 1 ? "es" : ""}`);
-    if (parts.length > 0) return parts.slice(0, 3).join(", ");
-    return "Synthesized reasoning plan";
+    if (counts["reasoning"]) parts.push(`${counts["reasoning"]} reasoning step${counts["reasoning"] > 1 ? "s" : ""}`);
+    if (parts.length > 0) return parts.join(" • ");
+    return "Synthesized reasoning and executed actions";
   }, [entries]);
 
   return (
@@ -703,6 +708,7 @@ export default function ThinkingBlock({
           className="thinking-header-main-btn"
           onClick={() => setCollapsed((v) => !v)}
           aria-expanded={!collapsed}
+          title={collapsed ? "Click to expand thinking steps" : "Click to collapse thinking steps"}
         >
           <div className="thinking-indicator-badge">
             {live ? (
@@ -727,7 +733,7 @@ export default function ThinkingBlock({
               <ThinkingTimer live={live} />
 
               <span className="thinking-step-count font-mono">
-                ({entries.length} step{entries.length === 1 ? "" : "s"})
+                {entries.length} step{entries.length === 1 ? "" : "s"}
               </span>
             </div>
 
@@ -740,7 +746,7 @@ export default function ThinkingBlock({
 
           <div className="thinking-header-right-actions">
             <span className="thinking-view-steps-hint">
-              {collapsed ? "Show vertical flow" : "Collapse"}
+              {collapsed ? `View timeline (${entries.length})` : "Collapse"}
             </span>
             <div className="thinking-expand-icon">
               <ChevronRightIcon size={14} className={collapsed ? "" : "is-expanded-rotate"} />
