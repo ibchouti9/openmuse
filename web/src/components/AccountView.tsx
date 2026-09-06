@@ -25,7 +25,6 @@ export default function AccountView({
   const [cfgErr, setCfgErr] = useState<string | null>(null);
 
   // Auth form states
-  const [statusOut, setStatusOut] = useState<any>(null);
   const [actionOut, setActionOut] = useState<any>(null);
   const [key, setKey] = useState("");
   const [provider, setProvider] = useState("");
@@ -47,18 +46,6 @@ export default function AccountView({
       setActionOut(res);
     } catch (e: any) {
       setActionOut({ error: e.message });
-    } finally {
-      setAuthBusy(false);
-    }
-  }
-
-  async function handleCheckStatus() {
-    setAuthBusy(true);
-    try {
-      const res = await ops.authStatus();
-      setStatusOut(res);
-    } catch (e: any) {
-      setStatusOut({ error: e.message });
     } finally {
       setAuthBusy(false);
     }
@@ -126,7 +113,7 @@ export default function AccountView({
                 <SlidersIcon size={14} />
                 <span>Reasoning Effort</span>
               </div>
-              <span className="stat-value font-mono">{effort || "Auto"}</span>
+              <span className="stat-value font-mono">{effort || "Default (high)"}</span>
             </div>
 
             <div className="profile-stat-box">
@@ -153,7 +140,7 @@ export default function AccountView({
         <div className="account-section-card">
           <h3 className="section-card-title">Provider Authentication</h3>
           <p className="section-card-desc">
-            Credentials are kept safe on this local machine. You can also authenticate directly in terminal via <code>muse login</code>.
+            Credentials are kept safe on this local machine. You can also authenticate directly in terminal via <code>muse login</code> (Meta-account browser approval; <code>META_API_KEY</code> always takes priority over the account login).
           </p>
 
           <div className="credentials-form-grid">
@@ -170,13 +157,13 @@ export default function AccountView({
             </div>
 
             <div className="form-input-group">
-              <label className="field-label">Provider Name (Optional)</label>
+              <label className="field-label">Provider Name (Optional, default: meta)</label>
               <input
                 type="text"
                 className="settings-text-input"
                 value={provider}
                 onChange={(e) => setProvider(e.target.value)}
-                placeholder="e.g. google, openai, anthropic"
+                placeholder="meta (only accepted value)"
               />
             </div>
 
@@ -191,14 +178,6 @@ export default function AccountView({
               </button>
               <button
                 type="button"
-                className="btn-secondary"
-                onClick={handleCheckStatus}
-                disabled={authBusy}
-              >
-                Check Auth Status
-              </button>
-              <button
-                type="button"
                 className="btn-danger-ghost"
                 onClick={handleLogout}
                 disabled={authBusy}
@@ -208,11 +187,11 @@ export default function AccountView({
             </div>
           </div>
 
-          {(statusOut || actionOut) && (
+          {actionOut && (
             <div className="auth-response-box">
               <div className="terminal-header">Authentication Response</div>
               <pre className="terminal-content">
-                {JSON.stringify(actionOut || statusOut, null, 2)}
+                {JSON.stringify(actionOut, null, 2)}
               </pre>
             </div>
           )}
@@ -221,7 +200,7 @@ export default function AccountView({
         {/* Server Config Status */}
         {cfgOut && (
           <div className="account-section-card">
-            <h3 className="section-card-title">Server Host Configuration</h3>
+            <h3 className="section-card-title">Enterprise Configuration Status</h3>
             <pre className="terminal-content host-config">
               {JSON.stringify(cfgOut, null, 2)}
             </pre>

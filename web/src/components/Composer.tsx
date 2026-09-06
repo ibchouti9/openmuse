@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowUpIcon,
   CloseIcon,
@@ -27,11 +28,16 @@ export interface Attachment {
 
 const DEFAULT_MODEL = "muse-spark-1.3";
 
+export interface ModelOption {
+  id: string;
+  label: string;
+}
+
 const APPROVAL_LABELS: Record<string, string> = {
-  denyUnmatched: "Deny new",
-  onRequest: "Ask",
-  promptUnmatched: "Ask new",
-  allowAll: "Auto-accept",
+  denyUnmatched: "Deny unmatched",
+  onRequest: "On request",
+  promptUnmatched: "Prompt unmatched",
+  allowAll: "Allow all",
 };
 
 export default function Composer({
@@ -57,7 +63,7 @@ export default function Composer({
   input: string;
   setInput: (s: string) => void;
   busy: boolean;
-  models: string[];
+  models: ModelOption[];
   model: string;
   onModel: (m: string) => void;
   effort: string;
@@ -78,12 +84,42 @@ export default function Composer({
   const fileRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
+  const settingsBtnRef = useRef<HTMLButtonElement>(null);
+  const [popPos, setPopPos] = useState<{ left: number; bottom: number } | null>(null);
+
+  // The composer card clips overflow (3D glint), so the popover is portaled
+  // to the body and pinned above the settings pill.
+  useEffect(() => {
+    if (!settingsOpen) {
+      setPopPos(null);
+      return;
+    }
+    function place() {
+      const el = settingsBtnRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setPopPos({
+        left: Math.max(8, Math.min(r.left, window.innerWidth - 308)),
+        bottom: Math.max(8, window.innerHeight - r.top + 12),
+      });
+    }
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [settingsOpen]);
 
   const readyCount = attachments.filter((a) => a.ready && !a.error).length;
   const canSend = !!input.trim() || readyCount > 0;
-  const modelOptions = models.includes(DEFAULT_MODEL) ? models : [DEFAULT_MODEL, ...models];
+  const currentId = model || DEFAULT_MODEL;
+  const modelOptions: ModelOption[] = models.some((m) => m.id === currentId)
+    ? models
+    : [{ id: currentId, label: currentId }, ...models];
   const approvalLabel = APPROVAL_LABELS[approvalMode] || approvalMode;
-  const effortLabel = effort || "Auto";
+  const effortLabel = effort || "Default (high)";
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Escape") {
@@ -233,6 +269,7 @@ export default function Composer({
           {/* Model / Effort / Approval popover toggle */}
           <div className="popover-anchor">
             <button
+              ref={settingsBtnRef}
               type="button"
               className={`action-pill-btn-3d ${settingsOpen ? "active" : ""}`}
               onClick={() => setSettingsOpen((v) => !v)}
@@ -242,38 +279,45 @@ export default function Composer({
               <span className="action-pill-text">{model}</span>
               {effort && <span className={`effort-badge effort-${effort}`}>{effortLabel}</span>}
               {approvalMode === "allowAll" && (
-                <span className="approval-badge-warning" title="Auto-accept is enabled: tools run without confirmation">
-                  Auto
+                <span className="approval-badge-warning" title="Allow-all mode is enabled: tools run without confirmation">
+                  Allow all
                 </span>
               )}
               <ChevronDownIcon size={12} className={`pill-chevron ${settingsOpen ? "open" : ""}`} />
             </button>
 
-            {settingsOpen && (
-              <>
-                <div className="modal-backdrop-transparent" onClick={() => setSettingsOpen(false)} />
-                <div className="composer-popover-3d">
-                  <div className="popover-header">
-                    <span className="popover-title">Execution Settings</span>
-                  </div>
-
-                  <div className="popover-field">
-                    <div className="popover-field-label">
-                      <span>Model</span>
-                      <span className="popover-field-hint">Pinned for this session</span>
+            {settingsOpen &&
+              popPos &&
+              createPortal(
+                <>
+                  <div className="modal-backdrop-transparent" onClick={() => setSettingsOpen(false)} />
+                  <div
+                    className="composer-popover-3d popover-portal"
+                    style={{ left: popPos.left, bottom: popPos.bottom }}
+                  >
+                    <div className="popover-header">
+                      <span className="popover-title">Execution Settings</span>
                     </div>
-                    <select
-                      className="popover-select"
-                      value={model}
-                      onChange={(e) => onModel(e.target.value)}
-                    >
-                      {modelOptions.map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+
+                    <div className="popover-field">
+                      <div className="popover-field-label">
+                        <span>Model</span>
+                        <span className="popover-field-hint">
+                          {models.length === 0 ? "Catalog unavailable — current only" : "Pinned for this session"}
+                        </span>
+                      </div>
+                      <select
+                        className="popover-select"
+                        value={model}
+                        onChange={(e) => onModel(e.target.value)}
+                      >
+                        {modelOptions.map((m) => (
+                          <option key={m.id} value={m.id} title={m.id}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
                   <div className="popover-field">
                     <div className="popover-field-label">
@@ -285,7 +329,7 @@ export default function Composer({
                       value={effort}
                       onChange={(e) => onEffort(e.target.value)}
                     >
-                      <option value="">Auto (Default)</option>
+                      <option value="">Default (high)</option>
                       <option value="none">None</option>
                       <option value="minimal">Minimal</option>
                       <option value="low">Low</option>
@@ -306,10 +350,10 @@ export default function Composer({
                       value={approvalMode}
                       onChange={(e) => onApproval(e.target.value)}
                     >
-                      <option value="denyUnmatched">Deny new actions</option>
-                      <option value="onRequest">Ask every time</option>
-                      <option value="promptUnmatched">Ask for new tools</option>
-                      <option value="allowAll">Auto-accept (autonomous)</option>
+                      <option value="denyUnmatched">Deny unmatched</option>
+                      <option value="onRequest">On request</option>
+                      <option value="promptUnmatched">Prompt unmatched</option>
+                      <option value="allowAll">Allow all</option>
                     </select>
                     {approvalMode === "allowAll" && (
                       <div className="popover-warning-note">
@@ -317,10 +361,11 @@ export default function Composer({
                         <span>Tools execute automatically without prompting.</span>
                       </div>
                     )}
+                    </div>
                   </div>
-                </div>
-              </>
-            )}
+                </>,
+                document.body,
+              )}
           </div>
         </div>
 

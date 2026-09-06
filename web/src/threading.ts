@@ -15,6 +15,7 @@ export interface ThreadItem {
   visibleOutput?: string;
   summary?: string[];
   fallbackText?: string;
+  displayText?: string;
   turnId?: string;
   revision?: number;
   done: boolean;

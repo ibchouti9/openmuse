@@ -2111,6 +2111,12 @@ input, textarea, select {
   animation: popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* Portaled to document.body so the composer card's overflow:hidden never
+   clips it; positioned via inline left/bottom. */
+.composer-popover-3d.popover-portal {
+  position: fixed;
+}
+
 .popover-header {
   display: flex;
   align-items: center;

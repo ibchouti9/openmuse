@@ -25,7 +25,7 @@ import {
   StopIcon,
   UserIcon,
 } from "./components/Icons";
-import Composer, { Attachment } from "./components/Composer";
+import Composer, { Attachment, ModelOption } from "./components/Composer";
 import ThinkingBlock from "./components/ThinkingBlock";
 import ApprovalCard, { Approval } from "./components/ApprovalCard";
 import QuestionCard, { InputPrompt } from "./components/QuestionCard";
@@ -55,10 +55,10 @@ interface Todo {
 const DEFAULT_MODEL = "muse-spark-1.3";
 
 const APPROVAL_LABELS: Record<string, string> = {
-  denyUnmatched: "Deny new",
-  onRequest: "Ask",
-  promptUnmatched: "Ask new",
-  allowAll: "Auto-accept",
+  denyUnmatched: "Deny unmatched",
+  onRequest: "On request",
+  promptUnmatched: "Prompt unmatched",
+  allowAll: "Allow all",
 };
 
 type Tab = "chat" | "settings" | "account";
@@ -89,6 +89,7 @@ function wireToItem(it: any): Item {
     visibleOutput: it.visibleOutput,
     summary: Array.isArray(it.summary) ? it.summary.map((s: unknown) => String(s ?? "")) : undefined,
     fallbackText: typeof it.fallbackText === "string" ? it.fallbackText : undefined,
+    displayText: typeof it.displayText === "string" ? it.displayText : undefined,
     turnId: typeof it.turnId === "string" ? it.turnId : undefined,
     revision: typeof it.revision === "number" ? it.revision : undefined,
     done: it.status !== "inProgress",
@@ -174,7 +175,7 @@ export default function App() {
 
   const daypart = (() => {
     const h = new Date().getHours();
-    return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+    return h < 12 ? "Mornin'" : h < 18 ? "Hey there" : "Evenin'";
   })();
 
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -196,10 +197,17 @@ export default function App() {
   const [usage, setUsage] = useState<{ inTok: number; outTok: number; model?: string } | null>(null);
   const [ctx, setCtx] = useState<{ used: number; window: number } | null>(null);
   const [streaming, setStreaming] = useState<string | null>(null);
-  const [models, setModels] = useState<string[]>([]);
-  const [model, setModel] = useState(DEFAULT_MODEL);
-  const [approvalMode, setApprovalMode] = useState("allowAll");
-  const [titles, setTitles] = useState<Record<string, string>>({});
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [model, setModel] = useState(() => localStorage.getItem("openmuse.model") || DEFAULT_MODEL);
+  const [approvalMode, setApprovalMode] = useState("onRequest");
+  const [titles, setTitles] = useState<Record<string, string>>(() => {
+    try {
+      const cached = JSON.parse(localStorage.getItem("openmuse.titles") || "{}");
+      return cached && typeof cached === "object" ? cached : {};
+    } catch {
+      return {};
+    }
+  });
   const [workspace, setWorkspace] = useState(() => localStorage.getItem("openmuse.workspace") || "");
   const [picking, setPicking] = useState(false);
   const [effort, setEffort] = useState(() => localStorage.getItem("openmuse.effort") || "");
@@ -400,7 +408,8 @@ export default function App() {
 
   function titleFor(s: Session): string {
     const dated = fmtDate(s.updatedAt);
-    const fallback = dated ? `Chat · ${dated}` : `Chat ${s.sessionId.slice(0, 4)}…${s.sessionId.slice(-4)}`;
+    const noun = s.turnCount === 0 ? "Empty chat" : "Chat";
+    const fallback = dated ? `${noun} · ${dated}` : `${noun} ${s.sessionId.slice(0, 4)}…${s.sessionId.slice(-4)}`;
     return titles[s.sessionId] || s.title || fallback;
   }
 
@@ -430,9 +439,11 @@ export default function App() {
   }
 
   function titleFromItems(arr: Item[], sid: string) {
-    const first = arr.find((w) => w.kind === "userMessage" && w.text.trim());
+    const first = arr.find(
+      (w) => w.kind === "userMessage" && (w.text.trim() || (w.displayText || "").trim()),
+    );
     if (first) {
-      const t = cleanTitle(first.text);
+      const t = cleanTitle(first.text.trim() ? first.text : first.displayText || "");
       if (t) setTitles((ts) => (ts[sid] ? ts : { ...ts, [sid]: t }));
     }
   }
@@ -610,41 +621,66 @@ export default function App() {
   onEventRef.current = onEvent;
   useEffect(() => subscribe((method: string, params: any) => onEventRef.current(method, params), setStatus), []);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem("openmuse.titles", JSON.stringify(titles));
+    } catch {
+      /* storage unavailable or full; titles just won't persist */
+    }
+  }, [titles]);
+
   const titleTried = useRef<Set<string>>(new Set());
+  const [titlePass, setTitlePass] = useState(0);
   useEffect(() => {
     const missing = sessions
       .filter((s) => !titles[s.sessionId] && !s.title && !titleTried.current.has(s.sessionId))
-      .slice(0, 25);
+      .slice(0, 12);
     if (missing.length === 0) return;
-    missing.forEach((s) => titleTried.current.add(s.sessionId));
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     (async () => {
       const queue = missing.slice();
+      let hadError = false;
       async function worker() {
         while (queue.length > 0 && !cancelled) {
           const s = queue.shift();
           if (!s) return;
           try {
+            // view/page's first page carries the full early event history,
+            // including the first user message even for compacted sessions
+            // (where session/read serves snapshot mode with items=null).
             const r = await api(`/api/view?sessionId=${encodeURIComponent(s.sessionId)}`);
+            if (cancelled) return;
+            titleTried.current.add(s.sessionId);
             const evts = r.events || [];
             const first = evts
               .map((e: any) => e.params && e.params.item)
-              .find((w: any) => w && w.kind === "userMessage" && w.text && w.text.trim());
-            if (first && !cancelled) {
-              const t = cleanTitle(first.text);
+              .find(
+                (w: any) =>
+                  w &&
+                  w.kind === "userMessage" &&
+                  ((w.text && w.text.trim()) || (w.displayText && w.displayText.trim())),
+              );
+            if (first) {
+              const t = cleanTitle(first.text && first.text.trim() ? first.text : first.displayText);
               if (t) setTitles((ts) => (ts[s.sessionId] ? ts : { ...ts, [s.sessionId]: t }));
             }
           } catch {
-            /* ignore */
+            // Leave the session untried so a later pass retries it.
+            hadError = true;
           }
         }
       }
-      await Promise.all([worker(), worker(), worker(), worker()]);
+      await Promise.all([worker(), worker(), worker()]);
+      if (hadError && !cancelled && titlePass < 6) {
+        retryTimer = setTimeout(() => setTitlePass((p) => p + 1), 4000);
+      }
     })();
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [sessions, titles]);
+  }, [sessions, titles, titlePass]);
 
   useEffect(() => {
     api("/api/health")
@@ -663,9 +699,19 @@ export default function App() {
     api("/api/models")
       .then((r) => {
         const list = r.models || r || [];
-        setModels(
-          list.map((m: any) => (typeof m === "string" ? m : m.modelId || m.id || m.label || String(m))),
-        );
+        const opts: ModelOption[] = (Array.isArray(list) ? list : []).map((m: any) => {
+          if (typeof m === "string") return { id: m, label: m };
+          const id = m.modelId || m.id || m.label || String(m);
+          return { id, label: m.displayLabel || m.label || id };
+        });
+        setModels(opts);
+        // Adopt the catalog default when the user has no stored preference.
+        if (!localStorage.getItem("openmuse.model") && opts.length > 0) {
+          const raw = Array.isArray(list) ? list : [];
+          const def = raw.find((m: any) => m && typeof m === "object" && m.isDefault);
+          const pick = def ? def.modelId || def.id : opts[0].id;
+          if (pick) setModel(pick);
+        }
       })
       .catch(() => {});
   }, []);
@@ -724,9 +770,8 @@ export default function App() {
       const body: any = { approvalMode, modelId: model || DEFAULT_MODEL };
       if (workspace) body.workspaceRoot = workspace;
       const providerId = localStorage.getItem("openmuse.provider") || "";
-      const fixedSid = localStorage.getItem("openmuse.sessionId") || "";
       if (providerId) body.providerId = providerId;
-      if (fixedSid) body.sessionId = fixedSid;
+      // No fixed sessionId: the host mints a UUIDv7 per session/start.
       const r = await api("/api/session/start", { method: "POST", body: JSON.stringify(body) });
       const s = r.session;
       setSessions((xs) => upsertSessionList(xs, s));
@@ -876,6 +921,11 @@ export default function App() {
 
   async function changeModel(modelId: string) {
     setModel(modelId);
+    try {
+      if (modelId) localStorage.setItem("openmuse.model", modelId);
+    } catch {
+      /* ignore */
+    }
     if (!sessionId || !modelId) return;
     try {
       await api("/api/session/model", { method: "POST", body: JSON.stringify({ sessionId, modelId }) });
@@ -1156,7 +1206,7 @@ export default function App() {
               {/* Status Indicator */}
               <div
                 className={`topbar-status-badge ${status.connected ? "is-connected" : "is-offline"}`}
-                title={status.mock ? "Demo host mode" : status.connected ? "Muse Engine Online (muse-spark-1.3)" : "Muse Engine Offline"}
+                title={status.mock ? "Demo host mode" : status.connected ? `Muse Engine Online (${model})` : "Muse Engine Offline"}
               >
                 <span className="status-live-dot" />
                 <span className="status-live-label">{status.mock ? "Demo" : status.connected ? "Online" : "Offline"}</span>
@@ -1382,7 +1432,7 @@ export default function App() {
               </div>
               <h1 className="hero-heading">{daypart}</h1>
               <p className="hero-subheading">
-                How can Muse help you engineer software today? Ask architectural questions, write code, or review diffs.
+                What are we hacking on today? Ask me anything, ship some code, or let me take a look at your diffs.
               </p>
 
               <div className="hero-starter-grid">
@@ -1430,7 +1480,7 @@ export default function App() {
                   busy={false}
                   models={models}
                   model={model}
-                  onModel={setModel}
+                  onModel={changeModel}
                   effort={effort}
                   onEffort={chooseEffort}
                   approvalMode={approvalMode}

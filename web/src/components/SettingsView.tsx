@@ -20,6 +20,7 @@ const SETTINGS_CATEGORIES: {
   id: string;
   name: string;
   icon: typeof SlidersIcon;
+  note?: string;
   fields: SettingSpec[];
 }[] = [
   {
@@ -27,40 +28,48 @@ const SETTINGS_CATEGORIES: {
     name: "Model & Reasoning",
     icon: CpuIcon,
     fields: [
-      { key: "openmuse.model", label: "Model ID", kind: "text", desc: "Explicit model name override for new sessions (e.g. muse-spark-1.3)." },
-      { key: "openmuse.effort", label: "Reasoning Effort", kind: "select", options: ["none", "minimal", "low", "medium", "high", "xhigh", "ultra"], emptyLabel: "Auto", desc: "Allocates thinking token budget before emitting tool actions." },
-      { key: "openmuse.maxSteps", label: "Max Model Steps", kind: "number", min: 1, integer: true, desc: "Maximum consecutive autonomous reasoning turns per prompt." },
-      { key: "openmuse.maxToolBytes", label: "Max Tool Output (bytes)", kind: "number", min: 1, integer: true, desc: "Truncate oversized tool stdout/stderr to protect context window." },
-      { key: "openmuse.compaction", label: "Compaction Strategy", kind: "text", desc: "Identifier for context summarizing strategy." },
-      { key: "openmuse.compactionSoft", label: "Compaction Soft Threshold", kind: "number", min: 0, integer: true, desc: "Token threshold where gentle compaction starts." },
-      { key: "openmuse.compactionHard", label: "Compaction Hard Threshold", kind: "number", min: 0, integer: true, desc: "Token threshold where aggressive trimming occurs." },
+      { key: "openmuse.model", label: "Model ID", kind: "text", desc: "Default model for new sessions. The composer can switch it per session." },
+      { key: "openmuse.effort", label: "Reasoning Effort", kind: "select", options: ["none", "minimal", "low", "medium", "high", "xhigh", "ultra"], emptyLabel: "Default (high)", desc: "Reasoning tier sampled per turn. Blank selects the server default (high)." },
     ],
   },
   {
     id: "workspace",
-    name: "Workspace & Safety",
+    name: "Workspace",
     icon: FolderIcon,
     fields: [
-      { key: "openmuse.workspace", label: "Default Workspace Path", kind: "text", desc: "Base local filesystem folder where commands and edits occur." },
-      { key: "openmuse.worktree", label: "Git Worktree Isolation", kind: "select", options: ["off", "create", "existing"], emptyLabel: "(default)", desc: "Run agent in an isolated Git worktree to protect working tree." },
-      { key: "openmuse.sandboxNetwork", label: "Sandbox Network Policy", kind: "select", options: ["restricted", "enabled", "proxy-only"], emptyLabel: "(default)", desc: "Network socket capabilities given to sandboxed tool runners." },
-      { key: "openmuse.disableWeb", label: "Disable Web Tools", kind: "flag", desc: "Prevent agent from making external HTTP fetches or web searches." },
-      { key: "openmuse.subagentIsolation", label: "Subagent Worktree Isolation", kind: "flag", desc: "Isolate parallel subagent turns in dedicated git branches." },
-      { key: "openmuse.safety", label: "Safety Flags", kind: "text", desc: "Flags: yolo, trust-workspace, disable-approval, disable-sandbox." },
+      { key: "openmuse.workspace", label: "Default Workspace Path", kind: "text", desc: "Workspace root new sessions are rooted at. Approval-gated file and shell tools operate here." },
     ],
   },
   {
     id: "engine",
-    name: "Engine & Protocol",
+    name: "Engine",
     icon: SettingsIcon,
     fields: [
-      { key: "openmuse.provider", label: "Provider", kind: "select", options: ["echo", "meta"], emptyLabel: "(default)", desc: "Underlying agent runtime engine." },
-      { key: "openmuse.preset", label: "Preset", kind: "select", options: ["native-basic", "miniswe"], emptyLabel: "(default)", desc: "Prompt template and persona configuration." },
-      { key: "openmuse.baseUrl", label: "Provider Base URL", kind: "text", desc: "Custom API gateway endpoint URL." },
-      { key: "openmuse.parallelCalls", label: "Parallel Tool Calls", kind: "toggle", desc: "Allow model to emit concurrent tool calls in a single turn." },
-      { key: "openmuse.approvalJudge", label: "Approval Judge", kind: "toggle", desc: "Enable automated risk judge on tool execution." },
-      { key: "openmuse.noSessionLog", label: "Disable Session Log", kind: "flag", desc: "Do not write durable session transcripts to disk." },
-      { key: "openmuse.echoDelay", label: "Echo Delay (ms)", kind: "number", min: 0, integer: true, desc: "Artificial delay for testing streaming animations." },
+      { key: "openmuse.provider", label: "Provider", kind: "select", options: ["echo", "meta"], emptyLabel: "Default (meta)", desc: "Startup provider: echo or meta." },
+    ],
+  },
+  {
+    id: "host",
+    name: "Headless & Host",
+    icon: SlidersIcon,
+    note: "Host-level and headless-exec options. Stored locally but NOT applied to chat sessions — the MSP wire only carries model, effort, approval mode, workspace, and provider. Apply these by restarting the host with flags (MUSE_EXTRA_ARGS) or via headless exec.",
+    fields: [
+      { key: "openmuse.preset", label: "Preset", kind: "select", options: ["native-basic", "miniswe"], emptyLabel: "(default)", desc: "Run a built-in preset. (muse --preset)" },
+      { key: "openmuse.baseUrl", label: "Provider Base URL", kind: "text", desc: "Override the provider base URL. (muse --base-url)" },
+      { key: "openmuse.parallelCalls", label: "Parallel Tool Calls", kind: "toggle", desc: "Meta API parallel tool calls. (muse --parallel-tool-calls / --no-parallel-tool-calls)" },
+      { key: "openmuse.approvalJudge", label: "Approval Judge", kind: "select", options: ["off", "on"], emptyLabel: "Default (on)", desc: "LLM approval judge for Prompt-bound calls. (muse --approval-judge)" },
+      { key: "openmuse.noSessionLog", label: "Disable Session Log", kind: "flag", desc: "Do not persist session event logs to disk. (muse serve --no-session-log; host-level)" },
+      { key: "openmuse.echoDelay", label: "Echo Delay (ms)", kind: "number", min: 0, integer: true, desc: "Deterministic echo reply delay (echo provider only). (muse --echo-delay-ms)" },
+      { key: "openmuse.maxSteps", label: "Max Model Steps", kind: "number", min: 1, integer: true, desc: "Cap the number of model steps. (muse exec --max-model-steps)" },
+      { key: "openmuse.maxToolBytes", label: "Max Tool Output (bytes)", kind: "number", min: 1, integer: true, desc: "Cap tool output bytes fed back to the model. (muse exec --max-tool-output-bytes)" },
+      { key: "openmuse.compaction", label: "Compaction Strategy", kind: "select", options: ["summary-preserved-suffix/v1", "prefix-extension-summary/v1", "prefix-extension-inventory-summary/v1"], emptyLabel: "(default)", desc: "Context compaction strategy. (muse exec --context-compaction-strategy)" },
+      { key: "openmuse.compactionSoft", label: "Compaction Soft Threshold", kind: "number", min: 0, desc: "Soft compaction threshold as a fraction of the context window. (muse exec --context-compaction-soft-threshold <FRAC>)" },
+      { key: "openmuse.compactionHard", label: "Compaction Hard Threshold", kind: "number", min: 0, desc: "Hard compaction threshold as a fraction of the context window. (muse exec --context-compaction-hard-threshold <FRAC>)" },
+      { key: "openmuse.worktree", label: "Git Worktree", kind: "select", options: ["off", "create", "existing"], emptyLabel: "Default (off)", desc: "Session Git worktree. (muse -w / --worktree; run-level)" },
+      { key: "openmuse.sandboxNetwork", label: "Sandbox Network Mode", kind: "select", options: ["restricted", "enabled", "proxy-only"], emptyLabel: "Default (proxy-only)", desc: "Sandbox network mode. (muse serve --sandbox-network; host-level)" },
+      { key: "openmuse.disableWeb", label: "Disable Web Tools", kind: "flag", desc: "Disable web tools for the run. (muse exec --disable-web-tools)" },
+      { key: "openmuse.subagentIsolation", label: "Subagent Worktree Isolation", kind: "flag", desc: "Compatibility flag; capability defaults on. Only an affirmative per-child request asks for isolation." },
+      { key: "openmuse.safety", label: "Safety Flags", kind: "text", desc: "Run-level safety flags, comma-separated: yolo, trust-workspace, disable-approval, disable-sandbox. (muse --yolo etc.; host-level)" },
     ],
   },
   {
@@ -169,6 +178,7 @@ function SettingNumber({ spec }: { spec: Extract<SettingSpec, { kind: "number" }
           className="settings-text-input number"
           value={val}
           min={spec.min}
+          step={spec.integer === false || spec.integer === undefined ? "any" : 1}
           placeholder="Default"
           onChange={(e) => setVal(e.target.value)}
         />
@@ -355,6 +365,12 @@ export default function SettingsView({ onClose }: { onClose?: () => void }) {
           {activeTab === "updates" ? (
             <SelfUpdate />
           ) : (
+            <>
+            {currentCategory.note && (
+              <div className="modal-error-alert" role="note">
+                {currentCategory.note}
+              </div>
+            )}
             <div className="settings-fields-grid">
               {currentCategory.fields.map((field) => {
                 switch (field.kind) {
@@ -372,6 +388,7 @@ export default function SettingsView({ onClose }: { onClose?: () => void }) {
                 }
               })}
             </div>
+            </>
           )}
         </div>
       </div>

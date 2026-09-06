@@ -44,7 +44,6 @@ export const ops = {
   compact: (sessionId: string, turnId?: string) =>
     api("/api/session/compact", { method: "POST", body: JSON.stringify({ sessionId, ...(turnId ? { turnId } : {}) }) }),
   configStatus: () => api("/api/config/status"),
-  authStatus: () => api("/api/auth/status"),
   authLogout: () => api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) }),
   authSet: (apiKey: string, provider?: string) =>
     api("/api/auth/set", { method: "POST", body: JSON.stringify({ apiKey, provider }) }),

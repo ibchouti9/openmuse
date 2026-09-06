@@ -509,8 +509,20 @@ app.post("/api/exec", async (req, res) => {
     if (b.disableWeb) args.push("--disable-web-tools");
     if (b.noForeignCtx) args.push("--no-foreign-personal-context");
     if (b.noSessionLog) args.push("--no-session-log");
-    push("--approval-mode", b.approvalMode);
-    push("--approval-judge", b.approvalJudge);
+    // CLI vocabulary only: untrusted|on-request|never. MSP wire values
+    // (allowAll|promptUnmatched|onRequest|denyUnmatched) are chat-only.
+    if (b.approvalMode !== undefined && b.approvalMode !== null && String(b.approvalMode) !== "") {
+      if (!["untrusted", "on-request", "never"].includes(String(b.approvalMode))) {
+        return res.status(400).json({ error: "approvalMode must be untrusted|on-request|never for exec (MSP values allowAll|promptUnmatched|onRequest|denyUnmatched are chat-only)" });
+      }
+      args.push("--approval-mode", String(b.approvalMode));
+    }
+    if (b.approvalJudge !== undefined && b.approvalJudge !== null && String(b.approvalJudge) !== "") {
+      if (!["off", "on"].includes(String(b.approvalJudge))) {
+        return res.status(400).json({ error: "approvalJudge must be off|on" });
+      }
+      args.push("--approval-judge", String(b.approvalJudge));
+    }
     if (b.agents) push("--agents", b.agents);
     if (b.yolo) args.push("--yolo");
     if (b.trustWorkspace) args.push("--trust-workspace");
@@ -627,13 +639,6 @@ app.post("/api/config/validate", async (req, res) => {
     sendError(res, e);
   }
 });
-app.get("/api/auth/status", async (req, res) => {
-  try {
-    res.json(await cli.run(["config", "status"]));
-  } catch (e) {
-    sendError(res, e);
-  }
-});
 app.post("/api/auth/logout", async (req, res) => {
   try {
     res.json(await cli.run(["logout"]));
@@ -645,6 +650,9 @@ app.post("/api/auth/set", async (req, res) => {
   try {
     const { apiKey, provider } = req.body || {};
     if (!apiKey) return res.status(400).json({ error: "apiKey required" });
+    if (provider && String(provider) !== "meta") {
+      return res.status(400).json({ error: "provider must be meta (the only value `muse auth set` accepts)" });
+    }
     const args = ["auth", "set", ...(provider ? ["--provider", provider] : []), "--api-key-stdin"];
     res.json(await cli.run(args, { stdin: apiKey }));
   } catch (e) {
