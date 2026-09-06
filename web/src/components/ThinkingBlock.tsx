@@ -328,20 +328,42 @@ function CategoryIcon({ category }: { category: ToolCategory }) {
   }
 }
 
-function TruncatedOutput({ text, maxLines = 5 }: { text: string; maxLines?: number }) {
+function TruncatedOutput({
+  text,
+  maxLines = 5,
+  live = false,
+}: {
+  text: string;
+  maxLines?: number;
+  live?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const scrollRef = useRef<HTMLPreElement>(null);
   const lines = useMemo(() => text.split("\n"), [text]);
   const isLong = lines.length > maxLines;
 
+  // Auto-scroll output container smoothly while live streaming new output lines
+  useEffect(() => {
+    if (live && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [text, live]);
+
   const display = useMemo(() => {
     if (!isLong || expanded) return text;
+    // When live and long, show the active recent tail lines so the user sees live streaming updates
+    if (live) {
+      return "…\n" + lines.slice(-maxLines).join("\n");
+    }
     return lines.slice(0, maxLines).join("\n") + "\n…";
-  }, [text, isLong, expanded, lines, maxLines]);
+  }, [text, isLong, expanded, lines, maxLines, live]);
 
   return (
-    <div className="step-output-container">
+    <div className={`step-output-container ${live ? "is-live-output" : ""}`}>
       <div className="step-output-label-bar">
-        <span className="step-output-label">Output ({lines.length} lines)</span>
+        <span className="step-output-label">
+          {live ? "Live Output Stream" : "Output"} ({lines.length} line{lines.length === 1 ? "" : "s"})
+        </span>
         {isLong && (
           <button
             type="button"
@@ -355,7 +377,13 @@ function TruncatedOutput({ text, maxLines = 5 }: { text: string; maxLines?: numb
           </button>
         )}
       </div>
-      <pre className={`step-output-text-3d font-mono ${expanded ? "is-expanded" : ""}`}>{display}</pre>
+      <pre
+        ref={scrollRef}
+        className={`step-output-text-3d font-mono ${expanded ? "is-expanded" : ""} ${live ? "is-live-stream" : ""}`}
+      >
+        {display}
+        {live && <span className="stream-cursor-pulse font-mono" aria-hidden="true">▍</span>}
+      </pre>
     </div>
   );
 }
@@ -439,16 +467,24 @@ const CompletedStepRow = memo(function CompletedStepRow({
 
         {detailOpen && (
           <div className="step-details-drawer">
-            {act.commandSnippet && (
-              <div className="step-terminal-block-3d">
-                <span className="terminal-prompt">$</span>
-                <pre className="terminal-cmd-text font-mono">{act.commandSnippet}</pre>
+            {act.category === "reasoning" ? (
+              <div className="completed-reasoning-drawer-text font-sans">
+                {act.codeSnippet || act.headline}
               </div>
+            ) : (
+              <>
+                {act.commandSnippet && (
+                  <div className="step-terminal-block-3d">
+                    <span className="terminal-prompt">$</span>
+                    <pre className="terminal-cmd-text font-mono">{act.commandSnippet}</pre>
+                  </div>
+                )}
+                {act.codeSnippet && !act.commandSnippet && (
+                  <pre className="step-code-snippet-3d font-mono">{act.codeSnippet}</pre>
+                )}
+                {act.output && <TruncatedOutput text={act.output} maxLines={4} live={false} />}
+              </>
             )}
-            {act.codeSnippet && !act.commandSnippet && (
-              <pre className="step-code-snippet-3d font-mono">{act.codeSnippet}</pre>
-            )}
-            {act.output && <TruncatedOutput text={act.output} maxLines={4} />}
           </div>
         )}
       </div>
@@ -460,12 +496,14 @@ const HeroActiveStepCard = memo(function HeroActiveStepCard({
   entry,
   index,
   live,
+  hasStepsBelow,
   onCopy,
   isCopied,
 }: {
   entry: ThreadItem;
   index: number;
   live: boolean;
+  hasStepsBelow: boolean;
   onCopy: (id: string, text: string) => void;
   isCopied: boolean;
 }) {
@@ -482,6 +520,7 @@ const HeroActiveStepCard = memo(function HeroActiveStepCard({
             <CheckIcon size={11} />
           )}
         </div>
+        {hasStepsBelow && <div className="step-gutter-line hero-connector-line" />}
       </div>
 
       <div className="step-hero-card-3d">
@@ -522,32 +561,53 @@ const HeroActiveStepCard = memo(function HeroActiveStepCard({
           </div>
         </div>
 
-        {/* Hero Title & Target */}
-        <div className="hero-headline-block">
-          <span className="hero-action-title">{act.actionTitle}</span>
-          {act.target && (
-            <span className="hero-target-badge font-mono" title={act.target}>
-              {act.target}
-            </span>
-          )}
-        </div>
-
-        {/* Command Box if Terminal */}
-        {act.commandSnippet && (
-          <div className="step-terminal-block-3d hero-terminal-view">
-            <span className="terminal-prompt">$</span>
-            <pre className="terminal-cmd-text font-mono">{act.commandSnippet}</pre>
+        {/* Hero Content: Dedicated Reasoning Stream or Tool Execution */}
+        {act.category === "reasoning" ? (
+          <div className="hero-reasoning-flow-card">
+            <div className="hero-reasoning-headline-row">
+              <SparklesIcon size={13} className={live ? "sparkle-spin" : ""} />
+              <span className="hero-reasoning-summary-headline">
+                {act.headline}
+              </span>
+              {live && <span className="neural-live-badge">THINKING</span>}
+            </div>
+            {act.codeSnippet && (
+              <div className="hero-reasoning-stream-content">
+                <span className="reasoning-body-text">{act.codeSnippet}</span>
+                {live && <span className="stream-cursor-pulse" aria-hidden="true">▍</span>}
+              </div>
+            )}
           </div>
-        )}
+        ) : (
+          <>
+            {/* Hero Title & Target */}
+            <div className="hero-headline-block">
+              <span className="hero-action-title">{act.actionTitle}</span>
+              {act.target && (
+                <span className="hero-target-badge font-mono" title={act.target}>
+                  {act.target}
+                </span>
+              )}
+            </div>
 
-        {/* Code Snippet if File Edit */}
-        {act.codeSnippet && !act.commandSnippet && (
-          <pre className="step-code-snippet-3d hero-code-view font-mono">{act.codeSnippet}</pre>
-        )}
+            {/* Command Box if Terminal */}
+            {act.commandSnippet && (
+              <div className="step-terminal-block-3d hero-terminal-view">
+                <span className="terminal-prompt">$</span>
+                <pre className="terminal-cmd-text font-mono">{act.commandSnippet}</pre>
+              </div>
+            )}
 
-        {/* Output View with Line Cap */}
-        {act.output && (
-          <TruncatedOutput text={act.output} maxLines={5} />
+            {/* Code Snippet if File Edit */}
+            {act.codeSnippet && !act.commandSnippet && (
+              <pre className="step-code-snippet-3d hero-code-view font-mono">{act.codeSnippet}</pre>
+            )}
+
+            {/* Output View with Line Cap and Live Scrolling */}
+            {act.output && (
+              <TruncatedOutput text={act.output} maxLines={5} live={live} />
+            )}
+          </>
         )}
       </div>
     </div>
@@ -571,12 +631,12 @@ export default function ThinkingBlock({
 
   const live = thinkingLive(entries, streamingId);
 
-  // Auto-scroll timeline smoothly when streaming new entries
+  // Auto-scroll timeline smoothly when streaming new entries - keeps latest step at the top visible!
   useEffect(() => {
     const el = bodyRef.current;
     if (collapsed || !el || entries.length === seenCount.current) return;
     seenCount.current = entries.length;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    el.scrollTo({ top: 0, behavior: "smooth" });
   }, [entries.length, collapsed]);
 
   // Copy helper
@@ -591,19 +651,28 @@ export default function ThinkingBlock({
   const latestIndex = total - 1;
   const latestEntry = entries[latestIndex];
 
-  // Previous completed entries
+  // All previous entries (everything except latestIndex), paired with their original 0-based index
   const allPrevious = useMemo(() => {
-    return total > 1 ? entries.slice(0, latestIndex) : [];
+    if (total <= 1) return [];
+    return entries.slice(0, latestIndex).map((item, originalIdx) => ({
+      item,
+      originalIndex: originalIdx,
+    }));
   }, [entries, latestIndex, total]);
 
-  // Keep earlier ones clean if there are more than 3
-  const hasHiddenEarlier = allPrevious.length > 3 && !showAllEarlier;
-  const visiblePrevious = useMemo(() => {
-    if (!hasHiddenEarlier) return allPrevious;
-    return allPrevious.slice(allPrevious.length - 2);
-  }, [allPrevious, hasHiddenEarlier]);
+  // Show previous steps in reverse-chronological order (most recent first, directly under the Hero step)
+  const reversedPrevious = useMemo(() => {
+    return [...allPrevious].reverse();
+  }, [allPrevious]);
 
-  const hiddenCount = hasHiddenEarlier ? allPrevious.length - 2 : 0;
+  // If there are more than 2 previous steps, fold earlier ones cleanly
+  const hasHiddenEarlier = reversedPrevious.length > 2 && !showAllEarlier;
+  const visiblePrevious = useMemo(() => {
+    if (!hasHiddenEarlier) return reversedPrevious;
+    return reversedPrevious.slice(0, 2);
+  }, [reversedPrevious, hasHiddenEarlier]);
+
+  const hiddenCount = hasHiddenEarlier ? reversedPrevious.length - 2 : 0;
 
   // Highlights summary for settled title
   const settledSummary = useMemo(() => {
@@ -680,47 +749,71 @@ export default function ThinkingBlock({
         </button>
       </div>
 
-      {/* Vertical Steps Stream (Always visible vertically when open!) */}
+      {/* Vertical Steps Stream: Latest Hero Step on TOP, followed by completed steps below */}
       {!collapsed && (
         <div ref={bodyRef} className="vertical-thinking-timeline-flow">
-          {/* Earlier steps notice toggle */}
-          {hasHiddenEarlier && (
-            <div className="earlier-steps-toggle-row">
-              <button
-                type="button"
-                className="earlier-steps-toggle-btn"
-                onClick={() => setShowAllEarlier(true)}
-              >
-                ▲ Show {hiddenCount} earlier completed step{hiddenCount > 1 ? "s" : ""}
-              </button>
-            </div>
-          )}
-
-          {/* Previous Completed Steps Rows */}
-          {visiblePrevious.map((entry, idx) => {
-            const actualIndex = hasHiddenEarlier ? hiddenCount + idx : idx;
-            return (
-              <CompletedStepRow
-                key={entry.itemId}
-                entry={entry}
-                index={actualIndex}
-                isLast={false}
-                onCopy={copyText}
-                isCopied={copiedId === entry.itemId}
-              />
-            );
-          })}
-
-          {/* HERO LATEST / ACTIVE STEP */}
+          {/* 1. HERO LATEST / ACTIVE STEP AT THE TOP */}
           {latestEntry && (
             <HeroActiveStepCard
               key={latestEntry.itemId}
               entry={latestEntry}
               index={latestIndex}
               live={live}
+              hasStepsBelow={allPrevious.length > 0}
               onCopy={copyText}
               isCopied={copiedId === latestEntry.itemId}
             />
+          )}
+
+          {/* 2. COMPLETED STEPS SECTION (Below Hero) */}
+          {allPrevious.length > 0 && (
+            <div className="previous-steps-section">
+              <div className="previous-steps-divider">
+                <div className="prev-steps-label">
+                  <span className="prev-steps-label-text">Completed steps</span>
+                  <span className="prev-steps-count font-mono">{allPrevious.length}</span>
+                </div>
+                {reversedPrevious.length > 2 && (
+                  <button
+                    type="button"
+                    className="prev-steps-toggle-btn"
+                    onClick={() => setShowAllEarlier((v) => !v)}
+                  >
+                    {showAllEarlier
+                      ? "Show fewer"
+                      : `+ ${hiddenCount} more step${hiddenCount > 1 ? "s" : ""}`}
+                  </button>
+                )}
+              </div>
+
+              <div className="previous-steps-list">
+                {visiblePrevious.map((entry, idx) => {
+                  const isLast = idx === visiblePrevious.length - 1 && !hasHiddenEarlier;
+                  return (
+                    <CompletedStepRow
+                      key={entry.item.itemId}
+                      entry={entry.item}
+                      index={entry.originalIndex}
+                      isLast={isLast}
+                      onCopy={copyText}
+                      isCopied={copiedId === entry.item.itemId}
+                    />
+                  );
+                })}
+              </div>
+
+              {hasHiddenEarlier && (
+                <div className="earlier-steps-toggle-row">
+                  <button
+                    type="button"
+                    className="earlier-steps-toggle-btn"
+                    onClick={() => setShowAllEarlier(true)}
+                  >
+                    ▼ View {hiddenCount} earlier completed step{hiddenCount > 1 ? "s" : ""}
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
