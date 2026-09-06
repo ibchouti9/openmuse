@@ -273,9 +273,15 @@ export default function App() {
     setGitAction(push ? "commit&push" : "commit");
     setGitNote(null);
     try {
-      const r = (await ops.gitCommit(workspace, message, push)) as { hash?: string; pushed?: boolean; status: GitStatus };
+      const r = (await ops.gitCommit(workspace, message, push)) as {
+        hash?: string;
+        pushed?: boolean;
+        message?: string;
+        generated?: boolean;
+        status: GitStatus;
+      };
       setGit(r.status);
-      setGitNote(`✓ committed ${r.hash || ""}${r.pushed ? " and pushed" : ""}`.trim());
+      setGitNote(`✓ committed ${r.hash || ""}${r.pushed ? " and pushed" : ""}${r.generated ? ` — ${r.message || ""}` : ""}`.trim());
     } catch (e: any) {
       setGitNote(e.message);
     } finally {

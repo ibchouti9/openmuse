@@ -9,6 +9,9 @@ const { execFile } = require("node:child_process");
 
 const MAX_FILES = 200;
 const MAX_MESSAGE = 2000;
+const MAX_DIFF_BYTES = 12000;
+const MESSAGE_TIMEOUT_MS = 90000;
+const MUSE_BIN = process.env.MUSE_BIN || "muse";
 
 function resolveDir(workspace) {
   let dir = workspace != null ? String(workspace).trim() : "";
@@ -139,15 +142,110 @@ async function pushRepo(root) {
   }
 }
 
+// One-line conventional-commit style fallback used when the model is
+// unavailable. Picks a prefix from the touched paths and names a few files.
+function heuristicMessage(st) {
+  const files = (st.files || []).map((f) => f.path);
+  const pick = files.slice(0, 3).join(", ");
+  const extra = files.length > 3 ? ` (+${files.length - 3} more)` : "";
+  let prefix = "chore";
+  const dirs = files.join("\n");
+  if (/web\/|\.tsx?$|\.jsx?$|\.css$|\.html$/.test(dirs)) prefix = "feat";
+  else if (/server\/|electron\//.test(dirs)) prefix = "feat";
+  else if (/README|\.md$/.test(dirs)) prefix = "docs";
+  else if (/test|spec/.test(dirs)) prefix = "test";
+  const names = (st.files || []).length;
+  if (names === 0) return "chore: update working tree";
+  return `${prefix}: update ${pick}${extra}`;
+}
+
+// Summarize unstaged+untracked work without failing when there is no HEAD yet.
+async function describeChanges(root) {
+  const st = await status(root);
+  let stat = "";
+  let diff = "";
+  try {
+    stat = await git(root, ["diff", "--stat", "--", "."]);
+  } catch {
+    stat = "";
+  }
+  try {
+    diff = await git(root, ["diff", "--", ".", ":(exclude)package-lock.json", ":(exclude)yarn.lock"]);
+  } catch {
+    diff = "";
+  }
+  let untracked = "";
+  try {
+    const names = (await git(root, ["ls-files", "--others", "--exclude-standard"]))
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 20);
+    if (names.length) untracked = `Untracked files:\n${names.join("\n")}`;
+  } catch {
+    untracked = "";
+  }
+  if (diff.length > MAX_DIFF_BYTES) diff = `${diff.slice(0, MAX_DIFF_BYTES)}\n... (truncated)`;
+  return { st, stat, diff, untracked };
+}
+
+function cleanModelMessage(text) {
+  let msg = String(text || "").replace(/```[\s\S]*?```/g, " ").trim();
+  msg = msg
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !/^["'`]+$/.test(l))[0] || "";
+  msg = msg.replace(/^["'`]+|["'`.,;]+$/g, "").trim();
+  if (/^(here is|here's|the commit message)/i.test(msg)) return "";
+  if (msg.length > 100) msg = msg.slice(0, 100).trim();
+  return msg;
+}
+
+// Ask the local `muse` CLI (same login, no extra API key) to write a
+// conventional-commit style one-liner from the working-tree diff.
+// Falls back to a heuristic summary when the model is unavailable.
+async function generateMessage(workspace) {
+  const dir = resolveDir(workspace);
+  const root = await toplevel(dir);
+  if (!root) throw new Error(`not a git repository: ${dir}`);
+  const { st, stat, diff, untracked } = await describeChanges(root);
+  if (st.total === 0) throw new Error("nothing to commit");
+  try {
+    const prompt =
+      "Write a single git commit message (one line, under 72 chars, conventional-commit style like 'feat: ...' or 'fix: ...'). " +
+      "Reply with ONLY the message, no quotes or explanation.\n\n" +
+      `Changed files: ${(st.files || []).map((f) => f.path).join(", ")}\n` +
+      (stat ? `Diff stat:\n${stat.slice(0, 2000)}\n` : "") +
+      (diff ? `Diff:\n${diff}\n` : "") +
+      (untracked ? `${untracked}\n` : "");
+    const out = await run(
+      MUSE_BIN,
+      ["exec", "--workspace", root, "--max-model-steps", "4", "--max-tool-output-bytes", "8000", prompt],
+      { cwd: root, timeout: MESSAGE_TIMEOUT_MS },
+    );
+    const msg = cleanModelMessage(out);
+    if (msg) return { ok: true, message: msg.slice(0, MAX_MESSAGE), generated: true };
+  } catch {
+    /* fall through to the heuristic fallback */
+  }
+  return { ok: true, message: heuristicMessage(st).slice(0, MAX_MESSAGE), generated: true, fallback: true };
+}
+
 async function commit(workspace, message, push = false) {
-  const msg = String(message || "").trim();
-  if (!msg) throw new Error("commit message required");
-  if (msg.length > MAX_MESSAGE) throw new Error(`commit message over ${MAX_MESSAGE} characters`);
+  let msg = String(message || "").trim();
   const dir = resolveDir(workspace);
   const root = await toplevel(dir);
   if (!root) throw new Error(`not a git repository: ${dir}`);
   const before = await status(root);
   if (before.total === 0 && !push) throw new Error("nothing to commit");
+  let generated = false;
+  if (!msg) {
+    const gen = await generateMessage(root);
+    msg = gen.message;
+    generated = true;
+  }
+  if (!msg) throw new Error("commit message required");
+  if (msg.length > MAX_MESSAGE) throw new Error(`commit message over ${MAX_MESSAGE} characters`);
   let hash = null;
   if (before.total > 0) {
     await git(root, ["add", "-A"]);
@@ -160,7 +258,7 @@ async function commit(workspace, message, push = false) {
     pushOutput = await pushRepo(root);
     pushed = true;
   }
-  return { ok: true, hash, pushed, pushOutput: pushOutput.slice(-2000), status: await status(root) };
+  return { ok: true, hash, pushed, message: msg, generated, pushOutput: pushOutput.slice(-2000), status: await status(root) };
 }
 
 async function push(workspace) {
@@ -193,4 +291,4 @@ async function pr(workspace, { title, body = "", base = "", draft = false } = {}
   return { ok: true, url };
 }
 
-module.exports = { status, commit, push, pr };
+module.exports = { status, commit, push, pr, generateMessage };

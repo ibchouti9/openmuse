@@ -5,7 +5,9 @@ import {
   GitPullRequestIcon,
   RefreshCwIcon,
   CheckIcon,
+  SparklesIcon,
 } from "./Icons";
+import { ops } from "../api";
 
 export interface GitStatus {
   repo: boolean;
@@ -48,8 +50,22 @@ export default function GitMenu({
   const [prTitle, setPrTitle] = useState("");
   const [prBody, setPrBody] = useState("");
   const [showPr, setShowPr] = useState(false);
-  const busyAny = busyAction != null;
+  const [generating, setGenerating] = useState(false);
+  const busyAny = busyAction != null || generating;
   const changes = status?.total || 0;
+
+  async function generateMessage() {
+    if (generating || changes === 0) return;
+    setGenerating(true);
+    try {
+      const r = (await ops.gitMessage(workspace)) as { message?: string };
+      if (r.message) setMessage(r.message);
+    } catch {
+      /* note is shown via onCommit fallback; leave the box untouched */
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   const repoName = (status?.root || workspace || "").split("/").filter(Boolean).pop() || status?.root || workspace;
 
@@ -141,7 +157,7 @@ export default function GitMenu({
             className="git-commit-input"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
-            placeholder="Commit message (e.g. fix: update styling)..."
+            placeholder="Commit message (leave empty for AI message)..."
             rows={2}
           />
 
@@ -149,11 +165,12 @@ export default function GitMenu({
             <button
               type="button"
               className="git-primary-btn"
-              disabled={busyAny || !message.trim() || changes === 0}
+              disabled={busyAny || changes === 0}
               onClick={() => {
                 onCommit(message.trim(), false);
                 setMessage("");
               }}
+              title={message.trim() ? "Commit with this message" : "Commit with an AI-generated message"}
             >
               <GitCommitIcon size={14} />
               <span>{busyAction === "commit" ? "Committing..." : "Commit"}</span>
@@ -162,15 +179,30 @@ export default function GitMenu({
             <button
               type="button"
               className="git-primary-btn push"
-              disabled={busyAny || !message.trim() || changes === 0}
+              disabled={busyAny || changes === 0}
               onClick={() => {
                 onCommit(message.trim(), true);
                 setMessage("");
               }}
-              title="Stage all changes, commit, and push upstream"
+              title={message.trim() ? "Stage all changes, commit, and push upstream" : "Generate an AI message, commit, and push upstream"}
             >
               <GitPullRequestIcon size={14} />
               <span>{busyAction === "commit&push" ? "Pushing..." : "Commit & Push"}</span>
+            </button>
+          </div>
+
+          <div className="git-button-row">
+            <button
+              type="button"
+              className="git-secondary-btn"
+              disabled={busyAny || changes === 0}
+              onClick={generateMessage}
+              title="Generate an AI commit message from your changes"
+            >
+              <span className="git-generate-label">
+                <SparklesIcon size={13} />
+                {generating ? "Generating..." : "Generate message"}
+              </span>
             </button>
           </div>
 

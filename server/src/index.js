@@ -680,6 +680,17 @@ app.post("/api/git/commit", async (req, res) => {
     sendError(res, e);
   }
 });
+app.post("/api/git/message", async (req, res) => {
+  try {
+    const { workspace } = req.body || {};
+    res.json(await gitops.generateMessage(workspace || ""));
+  } catch (e) {
+    if (/nothing to commit|not a git repository/i.test(e.message)) {
+      return res.status(400).json({ error: e.message });
+    }
+    sendError(res, e);
+  }
+});
 app.post("/api/git/push", async (req, res) => {
   try {
     const { workspace } = req.body || {};

@@ -2324,6 +2324,13 @@ input, textarea, select {
   color: var(--text-secondary);
 }
 
+.git-generate-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
 .git-pr-form {
   display: flex;
   flex-direction: column;

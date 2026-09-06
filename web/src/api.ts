@@ -53,6 +53,8 @@ export const ops = {
   gitStatus: (workspace: string) => api(`/api/git/status?workspace=${encodeURIComponent(workspace || "")}`),
   gitCommit: (workspace: string, message: string, push = false) =>
     api("/api/git/commit", { method: "POST", body: JSON.stringify({ workspace, message, push }) }),
+  gitMessage: (workspace: string) =>
+    api("/api/git/message", { method: "POST", body: JSON.stringify({ workspace }) }),
   gitPush: (workspace: string) => api("/api/git/push", { method: "POST", body: JSON.stringify({ workspace }) }),
   gitPr: (workspace: string, title: string, body = "", base = "", draft = false) =>
     api("/api/git/pr", { method: "POST", body: JSON.stringify({ workspace, title, body, base, draft }) }),
