@@ -64,9 +64,16 @@ done
 phase "build"
 "$NPM_BIN" run dist || fail "build failed"
 
-DMG="$REPO/electron/dist/OpenMuse-0.1.0-arm64.dmg"
-[ -f "$DMG" ] || DMG="$REPO/electron/dist/OpenMuse-0.1.0.dmg"
-[ -f "$DMG" ] || fail "build produced no dmg"
+DMG=""
+for f in "$REPO"/electron/dist/OpenMuse-*-arm64.dmg; do
+  [ -f "$f" ] && { DMG="$f"; break; }
+done
+if [ -z "$DMG" ]; then
+  for f in "$REPO"/electron/dist/OpenMuse-*.dmg; do
+    [ -f "$f" ] && { DMG="$f"; break; }
+  done
+fi
+[ -n "$DMG" ] || fail "build produced no dmg"
 
 APP_RUNNING=0
 if pgrep -f "OpenMuse.app/Contents" >/dev/null 2>&1; then

@@ -1,23 +1,4 @@
 // Tiny REST + SSE client for the OpenMuse server.
-export interface Choice {
-  choiceId: string;
-  label: string;
-  decision: string;
-  scope: string;
-  acceptsFeedback?: boolean;
-}
-
-export interface Approval {
-  approvalId: string;
-  sessionId: string;
-  toolName: string;
-  subject: unknown;
-  rawArgs?: string;
-  availableChoices: Choice[];
-  currentRequirementId: string;
-  settled?: boolean;
-}
-
 export async function api(path: string, init?: RequestInit) {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },

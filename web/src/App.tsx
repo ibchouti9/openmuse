@@ -9,11 +9,9 @@ import {
   CloseIcon,
   CodeIcon,
   DownloadIcon,
-  ExternalLinkIcon,
   GitBranchIcon,
   GitForkIcon,
   GlobeIcon,
-  MessageSquareIcon,
   Minimize2Icon,
   MoreHorizontalIcon,
   PlusIcon,
@@ -22,10 +20,9 @@ import {
   SettingsIcon,
   SidebarIcon,
   SparklesIcon,
-  StopIcon,
   UserIcon,
 } from "./components/Icons";
-import Composer, { Attachment, ModelOption } from "./components/Composer";
+import Composer, { Attachment, DEFAULT_MODEL, ModelOption } from "./components/Composer";
 import ThinkingBlock from "./components/ThinkingBlock";
 import ApprovalCard, { Approval } from "./components/ApprovalCard";
 import QuestionCard, { InputPrompt } from "./components/QuestionCard";
@@ -45,21 +42,6 @@ interface Session {
   turnCount?: number;
   status?: string;
 }
-
-interface Todo {
-  text: string;
-  status: string;
-  activeForm?: string;
-}
-
-const DEFAULT_MODEL = "muse-spark-1.3";
-
-const APPROVAL_LABELS: Record<string, string> = {
-  denyUnmatched: "Deny unmatched",
-  onRequest: "On request",
-  promptUnmatched: "Prompt unmatched",
-  allowAll: "Allow all",
-};
 
 type Tab = "chat" | "settings" | "account";
 
@@ -188,7 +170,6 @@ export default function App() {
   busyRef.current = busy;
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [prompts, setPrompts] = useState<InputPrompt[]>([]);
-  const [todos, setTodos] = useState<Todo[]>([]);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<{ connected: boolean; lastError: string | null; mock?: boolean }>({
     connected: false,
@@ -219,7 +200,6 @@ export default function App() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const bottomRef = useRef<HTMLDivElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const isAutoScrollingRef = useRef(false);
@@ -613,9 +593,6 @@ export default function App() {
         case "session/contextUsage":
           if (p.usedTokens != null && p.windowTokens) setCtx({ used: p.usedTokens, window: p.windowTokens });
           break;
-        case "session/todoListChanged":
-          setTodos(p.items || []);
-          break;
         default:
           break;
       }
@@ -726,7 +703,6 @@ export default function App() {
     setItems([]);
     setApprovals([]);
     setPrompts([]);
-    setTodos([]);
     setUsage(null);
     setCtx(null);
     setBusy(false);
@@ -989,7 +965,7 @@ export default function App() {
       const t = e.target as HTMLElement | null;
       const inField = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT");
       if (e.key === "Escape") {
-        if (document.activeElement && (document.activeElement.id === "topbar-search-input" || document.activeElement.id === "transcript-search")) {
+        if (document.activeElement && document.activeElement.id === "topbar-search-input") {
           setTranscriptFilter("");
           setSearchOpen(false);
           (document.activeElement as HTMLElement).blur();
@@ -1562,7 +1538,7 @@ export default function App() {
                         )}
                         <span className="message-author-label">{b.type === "user" ? "You" : "Muse"}</span>
                         {b.type === "agent" && (
-                          <span className="message-model-tag font-mono">muse-spark-1.3</span>
+                          <span className="message-model-tag font-mono">{model}</span>
                         )}
                         <div className="spacer" />
                         <MessageActions
@@ -1616,7 +1592,7 @@ export default function App() {
                 ))}
 
                 <div style={{ height: 28, flexShrink: 0 }} aria-hidden="true" />
-                <div ref={bottomRef} />
+                <div />
               </div>
 
               {error && <div className="modal-error-alert">{error}</div>}

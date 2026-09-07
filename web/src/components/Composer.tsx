@@ -7,7 +7,6 @@ import {
   FolderIcon,
   PaperclipIcon,
   SlidersIcon,
-  StopIcon,
   ChevronDownIcon,
   ShieldAlertIcon,
 } from "./Icons";
@@ -26,19 +25,12 @@ export interface Attachment {
   error?: string;
 }
 
-const DEFAULT_MODEL = "muse-spark-1.3";
+export const DEFAULT_MODEL = "muse-spark-1.3";
 
 export interface ModelOption {
   id: string;
   label: string;
 }
-
-const APPROVAL_LABELS: Record<string, string> = {
-  denyUnmatched: "Deny unmatched",
-  onRequest: "On request",
-  promptUnmatched: "Prompt unmatched",
-  allowAll: "Allow all",
-};
 
 export default function Composer({
   input,
@@ -118,7 +110,6 @@ export default function Composer({
   const modelOptions: ModelOption[] = models.some((m) => m.id === currentId)
     ? models
     : [{ id: currentId, label: currentId }, ...models];
-  const approvalLabel = APPROVAL_LABELS[approvalMode] || approvalMode;
   const effortLabel = effort || "Default (high)";
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -237,7 +228,7 @@ export default function Composer({
             ref={fileRef}
             type="file"
             multiple
-            accept="image/*,.txt,.md,.markdown,.json,.jsonl,.csv,.tsv,.log,.js,.jsx,.ts,.tsx,.py,.rb,.go,.rs,.java,.c,.h,.cpp,.hpp,.cs,.sh,.yml,.yaml,.toml,.ini,.css,.html,.xml,.sql,.swift,.kt,.scala,.php"
+            accept="image/*,.txt,.md,.markdown,.json,.jsonl,.csv,.tsv,.log,.js,.jsx,.ts,.tsx,.py,.rb,.go,.rs,.java,.c,.h,.cpp,.hpp,.cs,.sh,.yml,.yaml,.toml,.ini,.css,.html,.xml,.sql,.swift,.kt,.scala,.php,.r,.vue"
             style={{ display: "none" }}
             onChange={(e) => {
               const files = [...(e.target.files || [])];

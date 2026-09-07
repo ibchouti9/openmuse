@@ -20,10 +20,7 @@ export default function MusePrism3D({
     rotZ: 0.1,
     targetRotX: 0.3,
     targetRotY: 0.4,
-    mouseX: 0,
-    mouseY: 0,
     isHovering: false,
-    pulse: 0,
   });
 
   useEffect(() => {
@@ -135,7 +132,6 @@ export default function MusePrism3D({
         state.rotX = 0.25 + Math.sin(time * 0.6) * 0.15;
       }
       state.rotZ = Math.sin(time * 0.3) * 0.1;
-      state.pulse = Math.sin(time * 2.2) * 0.5 + 0.5;
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 

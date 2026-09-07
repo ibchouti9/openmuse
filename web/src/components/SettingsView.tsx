@@ -6,7 +6,6 @@ import {
   RefreshCwIcon,
   SettingsIcon,
   SlidersIcon,
-  CheckIcon,
 } from "./Icons";
 
 type SettingSpec =
@@ -116,7 +115,7 @@ function SettingSelect({ spec }: { spec: Extract<SettingSpec, { kind: "select" }
   );
 }
 
-function SettingToggle({ spec }: { spec: Extract<SettingSpec, { kind: "toggle" }> }) {
+function SettingToggle({ spec }: { spec: Extract<SettingSpec, { kind: "toggle" | "flag" }> }) {
   const [val, setVal] = useStored(spec.key, "");
   const isOn = val === "1" || val === "true";
   return (
@@ -140,29 +139,7 @@ function SettingToggle({ spec }: { spec: Extract<SettingSpec, { kind: "toggle" }
   );
 }
 
-function SettingFlag({ spec }: { spec: Extract<SettingSpec, { kind: "flag" }> }) {
-  const [val, setVal] = useStored(spec.key, "");
-  const isOn = val === "1" || val === "true";
-  return (
-    <div className="settings-field-card">
-      <div className="field-info">
-        <label className="field-label">{spec.label}</label>
-        {spec.desc && <p className="field-description">{spec.desc}</p>}
-      </div>
-      <div className="field-control">
-        <button
-          type="button"
-          className={`settings-toggle-switch ${isOn ? "on" : "off"}`}
-          onClick={() => setVal(isOn ? "" : "true")}
-          aria-checked={isOn}
-          role="switch"
-        >
-          <span className="toggle-thumb" />
-        </button>
-      </div>
-    </div>
-  );
-}
+const SettingFlag = SettingToggle;
 
 function SettingNumber({ spec }: { spec: Extract<SettingSpec, { kind: "number" }> }) {
   const [val, setVal] = useStored(spec.key, "");
