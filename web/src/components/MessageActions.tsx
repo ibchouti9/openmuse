@@ -15,10 +15,32 @@ export default function MessageActions({
   const [copied, setCopied] = useState(false);
 
   function handleCopy() {
-    navigator.clipboard?.writeText(text).then(() => {
+    const done = () => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1400);
-    });
+    };
+    try {
+      const p = navigator.clipboard?.writeText(text);
+      if (p) {
+        p.then(done).catch(() => setCopied(false));
+        return;
+      }
+    } catch {
+      /* fall through to legacy fallback */
+    }
+    // Fallback for contexts without the async clipboard API.
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      if (document.execCommand("copy")) done();
+      document.body.removeChild(ta);
+    } catch {
+      setCopied(false);
+    }
   }
 
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;

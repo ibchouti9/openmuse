@@ -3,8 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "main": "main.js",
+  "description": "OpenMuse desktop shell (Electron) — embeds the Node bridge server and shows the web UI.",
+  "author": "OpenMuse contributors",
+  "license": "MIT",
   "scripts": {
-    "dev": "electron .",
+    "dev": "OPENMUSE_DEV=1 electron .",
+    "smoke": "electron . --smoke",
     "dist": "electron-builder --mac dmg zip --arm64 --x64"
   },
   "devDependencies": {

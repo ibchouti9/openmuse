@@ -63,7 +63,15 @@ class MspHost extends EventEmitter {
 
   stop() {
     this.stopped = true;
-    if (this.proc) this.proc.kill();
+    if (this.proc) {
+      try {
+        this.proc.kill();
+      } catch {
+        /* already exited */
+      }
+    }
+    for (const [, p] of this.pending) p.reject(new Error("muse host is stopping"));
+    this.pending.clear();
   }
 
   _spawn() {

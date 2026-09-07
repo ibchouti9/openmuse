@@ -170,7 +170,7 @@ export default function Composer({
             <div key={a.id} className="attachment-chip-3d" title={a.error || `${a.name} · ${Math.round(a.size / 1024)} KB`}>
               {a.kind === "image" ? (
                 a.dataUrl ? (
-                  <img className="chip-preview-img" src={a.dataUrl} alt="" />
+                  <img className="chip-preview-img" src={a.dataUrl} alt={`Preview of ${a.name}`} />
                 ) : (
                   <div className="chip-loading-spinner" />
                 )
@@ -205,6 +205,7 @@ export default function Composer({
         <textarea
           ref={textareaRef}
           id="composer-input"
+          aria-label="Message input"
           value={input}
           onChange={handleInput}
           onKeyDown={handleKeyDown}

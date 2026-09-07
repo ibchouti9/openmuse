@@ -117,10 +117,10 @@ app.post("/api/session/resume", async (req, res) => {
 app.post("/api/turn", async (req, res) => {
   try {
     const { sessionId, text = "", reasoningEffort, images = [] } = req.body || {};
+    if (!Array.isArray(images)) return res.status(400).json({ error: "images must be an array" });
     if (!sessionId || (typeof text !== "string" || (!text && images.length === 0))) {
       return res.status(400).json({ error: "sessionId and text (or images) required" });
     }
-    if (!Array.isArray(images)) return res.status(400).json({ error: "images must be an array" });
     if (images.length > 8) return res.status(400).json({ error: "at most 8 images per turn" });
     const clean = images.map((img) => {
       if (!img || img.type !== undefined && img.type !== "image") throw new Error("invalid image part");
@@ -604,14 +604,20 @@ app.get("/api/sandbox", async (req, res) => {
   }
 });
 app.get("/api/schema", async (req, res) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openmuse-schema-"));
   try {
-    const { execSync } = require("node:child_process");
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openmuse-schema-"));
-    const out = execSync(`${cli.BIN} schema generate-json-schema --out ${dir}`, { encoding: "utf8", timeout: 15000 });
-    const methods = require(path.join(dir, "msp.schema.json"));
+    const { execFileSync } = require("node:child_process");
+    const out = execFileSync(cli.BIN, ["schema", "generate-json-schema", "--out", dir], { encoding: "utf8", timeout: 15000 });
+    const methods = JSON.parse(fs.readFileSync(path.join(dir, "msp.schema.json"), "utf8"));
     res.json({ ok: true, out: String(out).slice(0, 500), methods: Object.keys(methods.methods || {}), notifications: Object.keys(methods.notifications || {}) });
   } catch (e) {
     sendError(res, e);
+  } finally {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* best-effort cleanup */
+    }
   }
 });
 app.get("/api/config/status", async (req, res) => {
