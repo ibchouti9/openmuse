@@ -923,7 +923,10 @@ input, textarea, select {
   border-radius: var(--radius-md);
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 8px;
+  width: 100%;
+  text-align: left;
   cursor: pointer;
   transition: all var(--dur-fast) var(--ease-spring);
   box-shadow: var(--shadow-sm);
