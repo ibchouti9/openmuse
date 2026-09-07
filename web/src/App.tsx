@@ -107,10 +107,17 @@ function Markdown({ text }: { text: string }) {
     const el = (e.target as HTMLElement).closest("[data-code]");
     if (!el) return;
     const btn = el as HTMLButtonElement;
-    navigator.clipboard?.writeText(decodeURIComponent(el.getAttribute("data-code") || "")).then(() => {
-      btn.textContent = "✓ Copied";
-      setTimeout(() => (btn.textContent = "Copy"), 1400);
-    });
+    const code = decodeURIComponent(el.getAttribute("data-code") || "");
+    navigator.clipboard
+      ?.writeText(code)
+      ?.then(() => {
+        btn.textContent = "✓ Copied";
+        setTimeout(() => (btn.textContent = "Copy"), 1400);
+      })
+      ?.catch(() => {
+        btn.textContent = "Copy failed";
+        setTimeout(() => (btn.textContent = "Copy"), 1400);
+      });
   }
 
   return <div className="md-content" onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />;

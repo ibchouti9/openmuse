@@ -73,6 +73,19 @@ Installers land in `electron/dist/` (`-arm64.dmg` for Apple Silicon,
 `.dmg` for Intel). Unsigned build: on first launch, right-click the
 app → Open to bypass Gatekeeper.
 
+Desktop dev (hot reload via Vite) and smoke check:
+
+```sh
+npm run dev:server
+npm run dev:web
+npm --prefix electron run dev   # OPENMUSE_DEV=1 → loads http://localhost:5174/
+npm --prefix electron run smoke # boots bundled server, prints SMOKE health, exits
+```
+
+`OPENMUSE_PORT` overrides the desktop port (default `3101`); it is
+forwarded to the bundled server as `PORT`. If a server is already
+listening on that port (e.g. `npm start`), the app reuses it.
+
 Demo mode (no model calls, fake streaming transcript):
 
 ```sh
