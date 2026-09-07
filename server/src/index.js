@@ -15,6 +15,21 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "25mb" }));
 
+// Request IDs: X-Request-Id header + completion log for every API call,
+// so UI-reported failures can be matched to server lines.
+let nextReqId = 1;
+app.use((req, res, next) => {
+  req.id = `r${Date.now().toString(36)}-${nextReqId++}`;
+  res.setHeader("X-Request-Id", req.id);
+  const start = Date.now();
+  res.on("finish", () => {
+    if (req.path.startsWith("/api/")) {
+      console.log(`[openmuse] ${req.id} ${req.method} ${req.path} -> ${res.statusCode} ${Date.now() - start}ms`);
+    }
+  });
+  next();
+});
+
 // ---- event hub (SSE) ----
 const clients = new Set();
 function broadcast(event, data) {
