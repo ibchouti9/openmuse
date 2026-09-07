@@ -248,7 +248,9 @@ async function collectTranscript(sessionId) {
 app.get("/api/session/export", async (req, res) => {
   try {
     const { sessionId } = req.query;
-    if (!sessionId) return res.status(400).json({ error: "sessionId required" });
+    if (typeof sessionId !== "string" || !sessionId.trim()) {
+      return res.status(400).json({ error: "sessionId required" });
+    }
     const items = await collectTranscript(sessionId);
     res.json({ sessionId, exportedAt: new Date().toISOString(), items });
   } catch (e) {
