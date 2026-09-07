@@ -6,11 +6,13 @@ export default function MessageActions({
   isUser,
   onFork,
   onRetry,
+  onEdit,
 }: {
   text: string;
   isUser: boolean;
   onFork?: () => void;
   onRetry?: () => void;
+  onEdit?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -62,6 +64,17 @@ export default function MessageActions({
         {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
         <span>{copied ? "Copied" : "Copy"}</span>
       </button>
+
+      {isUser && onEdit && (
+        <button
+          type="button"
+          className="msg-action-btn"
+          onClick={onEdit}
+          title="Edit and resend this message"
+        >
+          <span>Edit</span>
+        </button>
+      )}
 
       {onFork && (
         <button
