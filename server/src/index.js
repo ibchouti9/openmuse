@@ -39,6 +39,20 @@ app.get("/api/events", (req, res) => {
   req.on("close", () => clients.delete(res));
 });
 
+// SSE heartbeat: comment frames keep idle phone/proxy connections alive.
+// Native EventSource ignores comment lines, so subscribed UIs are unaffected.
+const _heartbeatMs = Number(process.env.OPENMUSE_SSE_HEARTBEAT_MS || 25000);
+const SSE_HEARTBEAT_MS = Number.isFinite(_heartbeatMs) && _heartbeatMs >= 1000 ? _heartbeatMs : 25000;
+setInterval(() => {
+  for (const res of clients) {
+    try {
+      res.write(`: ping\n\n`);
+    } catch {
+      clients.delete(res);
+    }
+  }
+}, SSE_HEARTBEAT_MS);
+
 // ---- host (real or mock) ----
 let host;
 if (MOCK) {
