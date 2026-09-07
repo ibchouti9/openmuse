@@ -10,6 +10,10 @@ web/dist/
 *.dmg
 *.zip
 
+# Large promo videos (untracked in repo root)
+*.mp4
+*.mov
+
 # Logs
 *.log
 npm-debug.log*

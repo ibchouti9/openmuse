@@ -554,7 +554,7 @@ app.get("/api/trace", async (req, res) => {
 });
 app.get("/api/export", async (req, res) => {
   try {
-    const { session, last, redacted } = req.query;
+    const { session, redacted } = req.query;
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openmuse-export-"));
     const out = path.join(dir, "export.json");
     const args = ["export"];
@@ -606,8 +606,9 @@ app.get("/api/sandbox", async (req, res) => {
 app.get("/api/schema", async (req, res) => {
   try {
     const { execSync } = require("node:child_process");
-    const out = execSync(`${cli.BIN} schema generate-json-schema --out /tmp/openmuse-schema`, { encoding: "utf8", timeout: 15000 });
-    const methods = require("/tmp/openmuse-schema/msp.schema.json");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openmuse-schema-"));
+    const out = execSync(`${cli.BIN} schema generate-json-schema --out ${dir}`, { encoding: "utf8", timeout: 15000 });
+    const methods = require(path.join(dir, "msp.schema.json"));
     res.json({ ok: true, out: String(out).slice(0, 500), methods: Object.keys(methods.methods || {}), notifications: Object.keys(methods.notifications || {}) });
   } catch (e) {
     sendError(res, e);

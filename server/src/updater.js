@@ -48,7 +48,6 @@ function resolveRepo(hint) {
   const cands = [];
   if (process.env.OPENMUSE_REPO) cands.push(process.env.OPENMUSE_REPO);
   cands.push(process.cwd());
-  cands.push(path.join(os.homedir(), "Documents", "openmuse"));
   for (const c of cands) {
     try {
       const p = path.resolve(c.startsWith("~") ? path.join(os.homedir(), c.slice(1)) : c);
@@ -163,4 +162,4 @@ function readLogTail(maxBytes = 4000) {
   }
 }
 
-module.exports = { startUpdate, readStatus, readLogTail, resolveRepo, STATUS_FILE };
+module.exports = { startUpdate, readStatus, readLogTail, resolveRepo };

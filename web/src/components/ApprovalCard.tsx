@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 import { ShieldAlertIcon, TerminalIcon, ChevronRightIcon } from "./Icons";
 
 export interface Choice {
@@ -58,13 +58,6 @@ export default function ApprovalCard({
   const [feedback, setFeedback] = useState("");
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [showArgs, setShowArgs] = useState(false);
-  const cardRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (cardRef.current && cardRef.current.scrollTop !== 0) {
-      cardRef.current.scrollTop = 0;
-    }
-  }, []);
 
   const choices = a.availableChoices;
   const canFeedback = choices.some((c) => c.acceptsFeedback);
@@ -106,7 +99,6 @@ export default function ApprovalCard({
 
   return (
     <div
-      ref={cardRef}
       className="approval-card-3d"
       role="group"
       aria-label={`Approval request for ${a.toolName}`}

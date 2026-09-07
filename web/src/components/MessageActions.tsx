@@ -46,10 +46,10 @@ export default function MessageActions({
           type="button"
           className="msg-action-btn"
           onClick={onFork}
-          title="Fork session from this point"
+          title="Copy message text into composer"
         >
           <GitForkIcon size={12} />
-          <span>Branch</span>
+          <span>Reuse</span>
         </button>
       )}
 

@@ -6,7 +6,7 @@ const { spawn } = require("node:child_process");
 const { randomBytes } = require("node:crypto");
 const EventEmitter = require("node:events");
 
-// Minimal UUIDv7 for SS2.5/SS3.1.1 idempotency handles (commandId).
+// Minimal UUIDv7 for idempotency handles (commandId).
 function uuidv7() {
   const b = randomBytes(16);
   const ms = BigInt(Date.now());
@@ -192,7 +192,7 @@ class MspHost extends EventEmitter {
       clientInfo: { name: "openmuse", title: "OpenMuse", version: "0.1.0" },
       capabilities: this.capabilities,
     }).then((result) => {
-      // SS1.4.2: client-to-server notification closing the handshake; no params.
+      // Handshake notification: client-to-server notification closing the handshake; no params.
       // The host answers "Not initialized" to every method until it arrives.
       this._write({ jsonrpc: "2.0", method: "initialized" });
       return result;

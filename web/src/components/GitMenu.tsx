@@ -61,7 +61,7 @@ export default function GitMenu({
       const r = (await ops.gitMessage(workspace)) as { message?: string };
       if (r.message) setMessage(r.message);
     } catch {
-      /* note is shown via onCommit fallback; leave the box untouched */
+      /* on failure leave the box untouched */
     } finally {
       setGenerating(false);
     }

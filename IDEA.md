@@ -1,1 +1,1 @@
-the codex / claude dekstop open source version but for muse
+the codex / claude desktop open source version but for muse

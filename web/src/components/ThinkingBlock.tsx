@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import { ThreadItem, thinkingLive } from "../threading";
 import { ChevronDownIcon, ChevronRightIcon, StopIcon } from "./Icons";
 
-export function safeStr(v: any): string {
+function safeStr(v: any): string {
   if (v == null) return "";
   if (typeof v === "string") return v;
   if (Array.isArray(v)) return v.map(safeStr).join(" ");
@@ -45,7 +45,7 @@ function cleanRelativePath(p?: string): string {
   return s;
 }
 
-export type ActivityItem =
+type ActivityItem =
   | {
       id: string;
       kind: "explore";
@@ -520,7 +520,7 @@ export default function ThinkingBlock({
                       {act.commands.map((c, i) => (
                         <div key={i} className="antigravity-cmd-box">
                           <div className="antigravity-cmd-line">
-                            <span className="antigravity-prompt-path">~/.../openmuse</span>
+                            <span className="antigravity-prompt-path">~</span>
                             <span className="antigravity-dollar">$</span>
                             <span className="antigravity-cmd-text">{c.cmd}</span>
                           </div>

@@ -26,10 +26,6 @@ export type Block =
   | { type: "agent"; item: ThreadItem }
   | { type: "thinking"; key: string; entries: ThreadItem[]; isLive?: boolean };
 
-export function isMessage(item: ThreadItem): boolean {
-  return item.kind === "userMessage" || item.kind === "agentMessage";
-}
-
 export interface GroupThreadOptions {
   busy?: boolean;
   streamingId?: string | null;
@@ -145,15 +141,4 @@ export function applyItemDelta(item: ThreadItem, field: string, delta: string): 
 export function thinkingLive(entries: ThreadItem[], streamingId: string | null): boolean {
   if (streamingId && entries.some((e) => e.itemId === streamingId)) return true;
   return entries.some((e) => e.status === "inProgress");
-}
-
-// One-line generic rendering for kinds without dedicated UI (schema: render
-// unknown kinds generically from kind + status + fallback text).
-export function genericRowText(entry: ThreadItem): string {
-  if (entry.fallbackText) return entry.fallbackText;
-  if (entry.text) return entry.text;
-  const parts = [entry.kind || "activity", entry.status && entry.status !== "completed" ? entry.status : ""].filter(
-    Boolean,
-  );
-  return parts.join(" · ");
 }
