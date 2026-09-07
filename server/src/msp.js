@@ -171,6 +171,9 @@ class MspHost extends EventEmitter {
   }
 
   request(method, params, timeoutMs) {
+    if (this.stopped) {
+      return Promise.reject(new Error("muse host is stopping"));
+    }
     if (!this.proc || this.proc.exitCode !== null) {
       return Promise.reject(new Error("muse host is not running"));
     }
