@@ -267,6 +267,9 @@ async function collectTranscript(sessionId) {
     }
     cursor = r.nextCursor;
     if (!cursor) break;
+    if (page === TRANSCRIPT_MAX_PAGES - 1 && cursor) {
+      console.log(`[openmuse] transcript walk hit page cap (${TRANSCRIPT_MAX_PAGES}x${TRANSCRIPT_PAGE_LIMIT}) for session ${sessionId}; items may be incomplete`);
+    }
   }
   const latest = new Map();
   for (const it of items) latest.set(it.itemId, it);
