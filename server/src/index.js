@@ -92,7 +92,7 @@ function sendError(res, err) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, mock: MOCK, host: host.status() });
+  res.json({ ok: true, mock: MOCK, host: host.status(), uptimeSec: Math.floor(process.uptime()), pid: process.pid });
 });
 
 function clampInt(v, def, min, max) {
