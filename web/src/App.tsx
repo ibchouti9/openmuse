@@ -32,6 +32,7 @@ import SettingsView from "./components/SettingsView";
 import AccountView from "./components/AccountView";
 import MusePrism3D from "./components/MusePrism3D";
 import MessageActions from "./components/MessageActions";
+import AutomationsView from "./components/AutomationsView";
 
 interface Item extends ThreadItem {}
 
@@ -43,7 +44,7 @@ interface Session {
   status?: string;
 }
 
-type Tab = "chat" | "settings" | "account";
+type Tab = "chat" | "settings" | "account" | "automations";
 
 const TEXT_EXTS = new Set([
   "txt", "md", "markdown", "json", "jsonl", "csv", "tsv", "log", "js", "jsx", "ts", "tsx",
@@ -1059,6 +1060,16 @@ export default function App() {
               placeholder="Search chats..."
             />
           </div>
+
+          <button
+            type="button"
+            className={`sidebar-nav-btn ${tab === "automations" ? "active" : ""}`}
+            onClick={() => setTab("automations")}
+            title="Scheduled automations"
+          >
+            <RefreshCwIcon size={14} />
+            <span>Automations</span>
+          </button>
         </div>
 
         {/* Temporal Session List */}
@@ -1405,7 +1416,9 @@ export default function App() {
           </header>
 
           {/* ----------------- Active View Content ----------------- */}
-          {tab === "settings" ? (
+          {tab === "automations" ? (
+            <AutomationsView onClose={() => setTab("chat")} />
+          ) : tab === "settings" ? (
             <SettingsView onClose={() => setTab("chat")} />
           ) : tab === "account" ? (
             <AccountView
