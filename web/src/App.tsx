@@ -206,6 +206,8 @@ export default function App() {
   const [gitNote, setGitNote] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
 
   const threadRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
@@ -1557,6 +1559,14 @@ export default function App() {
                           onFork={() => {
                             setInput(b.item.text || "");
                           }}
+                          onEdit={
+                            b.type === "user"
+                              ? () => {
+                                  setEditingId(b.item.itemId);
+                                  setEditDraft(b.item.text || "");
+                                }
+                              : undefined
+                          }
                           onRetry={
                             b.type === "agent"
                               ? () => {
@@ -1571,9 +1581,65 @@ export default function App() {
                       </div>
 
                       {b.type === "user" ? (
-                        <div className="user-bubble-box">
-                          {b.item.text}
-                        </div>
+                        editingId === b.item.itemId ? (
+                          <div className="user-edit-wrap">
+                            <textarea
+                              className="user-edit-textarea"
+                              value={editDraft}
+                              autoFocus
+                              rows={3}
+                              aria-label="Edit message"
+                              onChange={(e) => setEditDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                                  e.preventDefault();
+                                  const next = editDraft.trim();
+                                  if (next && !busy) {
+                                    const t = next;
+                                    setEditingId(null);
+                                    setEditDraft("");
+                                    send(t);
+                                  }
+                                } else if (e.key === "Escape") {
+                                  setEditingId(null);
+                                  setEditDraft("");
+                                }
+                              }}
+                            />
+                            <div className="user-edit-actions">
+                              <button
+                                type="button"
+                                className="user-edit-btn primary"
+                                disabled={!editDraft.trim() || busy}
+                                title="Resend edited text as a new turn (⌘↵)"
+                                onClick={() => {
+                                  const next = editDraft.trim();
+                                  if (!next || busy) return;
+                                  setEditingId(null);
+                                  setEditDraft("");
+                                  send(next);
+                                }}
+                              >
+                                Resend
+                              </button>
+                              <button
+                                type="button"
+                                className="user-edit-btn"
+                                title="Discard edits (Esc)"
+                                onClick={() => {
+                                  setEditingId(null);
+                                  setEditDraft("");
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="user-bubble-box">
+                            {b.item.text}
+                          </div>
+                        )
                       ) : (
                         <div className={`agent-response-box ${streaming === b.item.itemId || (!b.item.done && busy) ? "streaming" : ""}`}>
                           <Markdown text={b.item.text || (b.item.done ? "" : "...")} />
