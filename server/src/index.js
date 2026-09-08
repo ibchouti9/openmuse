@@ -15,6 +15,21 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "25mb" }));
 
+// Request IDs: X-Request-Id header + completion log for every API call,
+// so UI-reported failures can be matched to server lines.
+let nextReqId = 1;
+app.use((req, res, next) => {
+  req.id = `r${Date.now().toString(36)}-${nextReqId++}`;
+  res.setHeader("X-Request-Id", req.id);
+  const start = Date.now();
+  res.on("finish", () => {
+    if (req.path.startsWith("/api/")) {
+      console.log(`[openmuse] ${req.id} ${req.method} ${req.path} -> ${res.statusCode} ${Date.now() - start}ms`);
+    }
+  });
+  next();
+});
+
 // ---- event hub (SSE) ----
 const clients = new Set();
 function broadcast(event, data) {
@@ -38,6 +53,20 @@ app.get("/api/events", (req, res) => {
   clients.add(res);
   req.on("close", () => clients.delete(res));
 });
+
+// SSE heartbeat: comment frames keep idle phone/proxy connections alive.
+// Native EventSource ignores comment lines, so subscribed UIs are unaffected.
+const _heartbeatMs = Number(process.env.OPENMUSE_SSE_HEARTBEAT_MS || 25000);
+const SSE_HEARTBEAT_MS = Number.isFinite(_heartbeatMs) && _heartbeatMs >= 1000 ? _heartbeatMs : 25000;
+setInterval(() => {
+  for (const res of clients) {
+    try {
+      res.write(`: ping\n\n`);
+    } catch {
+      clients.delete(res);
+    }
+  }
+}, SSE_HEARTBEAT_MS);
 
 // ---- host (real or mock) ----
 let host;
@@ -63,7 +92,7 @@ function sendError(res, err) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, mock: MOCK, host: host.status() });
+  res.json({ ok: true, mock: MOCK, host: host.status(), uptimeSec: Math.floor(process.uptime()), pid: process.pid });
 });
 
 function clampInt(v, def, min, max) {
@@ -238,6 +267,9 @@ async function collectTranscript(sessionId) {
     }
     cursor = r.nextCursor;
     if (!cursor) break;
+    if (page === TRANSCRIPT_MAX_PAGES - 1 && cursor) {
+      console.log(`[openmuse] transcript walk hit page cap (${TRANSCRIPT_MAX_PAGES}x${TRANSCRIPT_PAGE_LIMIT}) for session ${sessionId}; items may be incomplete`);
+    }
   }
   const latest = new Map();
   for (const it of items) latest.set(it.itemId, it);
@@ -248,7 +280,9 @@ async function collectTranscript(sessionId) {
 app.get("/api/session/export", async (req, res) => {
   try {
     const { sessionId } = req.query;
-    if (!sessionId) return res.status(400).json({ error: "sessionId required" });
+    if (typeof sessionId !== "string" || !sessionId.trim()) {
+      return res.status(400).json({ error: "sessionId required" });
+    }
     const items = await collectTranscript(sessionId);
     res.json({ sessionId, exportedAt: new Date().toISOString(), items });
   } catch (e) {
