@@ -120,6 +120,15 @@ function runOutcomeClass(outcome: AutomationRun["outcome"]): string {
   if (outcome === "started") return "is-running";
   return "";
 }
+
+function runOutcomeLabel(outcome: AutomationRun["outcome"]): string {
+  if (outcome === "completed") return "Succeeded";
+  if (outcome === "failed") return "Failed";
+  if (outcome === "cancelled") return "Cancelled";
+  if (outcome === "skipped") return "Skipped";
+  if (outcome === "started") return "Running";
+  return outcome;
+}
 // Mock create: resolves with a local def. Real POST /api/automations
 // integration follows once the defs endpoints are testable here.
 function mockCreateAutomation(input: {
@@ -611,13 +620,13 @@ export default function AutomationsView({
                 ) : (
                   runs.map((r) => (
                     <div key={r.runId} className="automation-run-row">
-                      <span className={`auto-status-pill ${runOutcomeClass(r.outcome)}`} title={`Run ${r.outcome}`}>
+                      <span className={`auto-status-pill ${runOutcomeClass(r.outcome)}`} title={`Run ${runOutcomeLabel(r.outcome).toLowerCase()}`}>
                         <span className="auto-status-dot" aria-hidden="true" />
-                        <span>{r.outcome}</span>
+                        <span>{runOutcomeLabel(r.outcome)}</span>
                       </span>
                       <span className="automation-run-meta font-mono">
                         {fmtTime(r.createdAt)} · {fmtDuration(r.durationMs)}
-                        {r.sessionId ? ` · ${r.sessionId.slice(0, 13)}` : ""}
+                        {r.sessionId ? ` · ${r.sessionId.length > 16 ? `${r.sessionId.slice(0, 13)}…` : r.sessionId}` : ""}
                       </span>
                       {r.error && <span className="automation-run-error">{r.error}</span>}
                     </div>
