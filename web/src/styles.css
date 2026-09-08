@@ -4490,3 +4490,16 @@ textarea.builder-input {
   flex-basis: 100%;
 }
 /* Run outcome pills reuse Lumen's .auto-status-pill tokens (see view). */
+
+/* ==========================================================================
+   Reduced Motion: still the full interface, none of the movement.
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
