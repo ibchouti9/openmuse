@@ -57,8 +57,8 @@ const MOCK_DIFF = `@@ -12,7 +12,8 @@ export default function Composer({
    approvalMode,
    onApproval,`;
 
-// Mock file diff. The real GET /api/git/diff plugs into the diffLoader
-// seam once it lands on main.
+// Mock file diff (fallback proof + tests). App wires the real
+// GET /api/git/diff through the diffLoader seam.
 function loadMockDiff(path: string): Promise<{ diff: string; truncated: boolean }> {
   void path;
   return new Promise((resolve) => {

@@ -1328,6 +1328,11 @@ export default function App() {
                       onPr={gitCreatePr}
                       busyAction={gitAction}
                       note={gitNote}
+                      diffLoader={(path) =>
+                        ops
+                          .gitDiff(workspace, path)
+                          .then((r: any) => ({ diff: r.diff || "", truncated: !!r.truncated }))
+                      }
                     />
                   </>
                 )}
