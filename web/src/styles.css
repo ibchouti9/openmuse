@@ -4336,7 +4336,7 @@ textarea.builder-input {
   height: 12px;
   border-radius: var(--radius-xs);
   background: rgba(255, 255, 255, 0.07);
-  animation: cursorBlink 1.2s infinite;
+  animation: cursorBlink 0.8s infinite;
 }
 
 .skeleton-line.short {
