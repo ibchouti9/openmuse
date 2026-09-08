@@ -646,7 +646,8 @@ async function cancelRun(runId, reason = null) {
     type: "run", runId: cur.runId, sessionId: cur.sessionId || null,
     turnId: cur.turnId || null, automationId: cur.automationId || null,
     automationName: cur.automationName || null, idempotencyKey: cur.idempotencyKey || null,
-    createdAt: new Date().toISOString(), prompt: cur.prompt, status: "cancelled",
+    prompt: cur.prompt || null,
+    createdAt: new Date().toISOString(), status: "cancelled",
   };
   if (reason) rec.reason = reason;
   automations.appendRecord(rec);
