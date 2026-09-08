@@ -4157,6 +4157,12 @@ input, textarea, select {
   border-radius: var(--radius-lg);
   padding: 14px 16px;
   box-shadow: var(--shadow-sm);
+  transition: border-color var(--dur-fast) var(--ease-spring), background var(--dur-fast) var(--ease-spring);
+}
+
+.automation-row:hover {
+  border-color: var(--border-default);
+  background: var(--bg-surface-hover);
 }
 
 .automation-row.is-skeleton {
@@ -4184,7 +4190,7 @@ input, textarea, select {
 }
 
 .automation-name {
-  font-weight: 650;
+  font-weight: 600;
   font-size: 14px;
 }
 
