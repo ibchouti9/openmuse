@@ -3886,6 +3886,24 @@ input, textarea, select {
   }
 }
 
+@media (max-width: 640px) {
+  .keyboard-shortcut-hint {
+    display: none;
+  }
+  .conversation-thread-scroll {
+    padding: 16px 16px 32px;
+  }
+  .composer-dock-container {
+    padding: 8px 12px 12px;
+  }
+  .automations-view {
+    padding: 20px 16px;
+  }
+  .hero-empty-container {
+    padding: 28px 16px;
+  }
+}
+
 /* ==========================================================================
    Antigravity-style Minimalist Thinking Block
    ========================================================================== */
