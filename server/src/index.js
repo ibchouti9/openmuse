@@ -83,7 +83,40 @@ if (MOCK) {
 host.on("notification", (msg) => {
   const params = msg.params || msg;
   broadcast("msp", { method: msg.method || "message", params });
+  automationRunEvent(msg.method, params);
 });
+
+// ---- automation run lifecycle -> SSE + ledger ----
+// Tracks turnId -> run context in memory (one-shot; a restart between start
+// and completion leaves the ledger at "started", which a later reconcile
+// step can heal). Frames reuse the "msp" event name so existing subscribers
+// receive run/* with no client changes.
+const automationTurns = new Map();
+function automationTrackRun(runId, sessionId, turnId, automationId, automationName) {
+  if (!turnId) return;
+  automationTurns.set(turnId, { runId, sessionId, automationId, automationName });
+  broadcast("msp", { method: "run/started", params: { runId, sessionId, turnId, automationId, automationName } });
+}
+function automationRunEvent(method, params) {
+  if (method !== "turn/completed" || !params || !params.turnId) return;
+  const tracked = automationTurns.get(params.turnId);
+  if (!tracked) return;
+  automationTurns.delete(params.turnId);
+  const terminal = params.terminal || "completed";
+  const status = terminal === "completed" ? "completed" : "failed";
+  const createdAt = new Date().toISOString();
+  const rec = {
+    type: "run", runId: tracked.runId, sessionId: tracked.sessionId,
+    turnId: params.turnId, automationId: tracked.automationId,
+    automationName: tracked.automationName, createdAt, status, terminal,
+  };
+  try {
+    automations.appendRecord(rec);
+  } catch {
+    /* ledger write failure must not kill the event path */
+  }
+  broadcast("msp", { method: status === "completed" ? "run/completed" : "run/failed", params: rec });
+}
 
 function sendError(res, err) {
   const msg = (err && err.message) || "request failed";
@@ -487,17 +520,18 @@ app.post("/api/automations/runs", async (req, res) => {
       idempotencyKey, createdAt, prompt: prompt.slice(0, 4000),
     };
     automations.appendRecord({ ...base, status: "created" });
+    let turnId = null;
     try {
       const started = await host.turnStart(sessionId, prompt, {});
-      automations.appendRecord({
-        ...base, status: "started",
-        turnId: started && started.turnId ? started.turnId : null,
-      });
+      turnId = started && started.turnId ? started.turnId : null;
+      automations.appendRecord({ ...base, status: "started", turnId });
     } catch (e) {
       const failed = { ...base, status: "failed", error: (e && e.message) || "turn start failed" };
       automations.appendRecord(failed);
+      broadcast("msp", { method: "run/failed", params: failed });
       return res.status(502).json({ run: failed, error: failed.error });
     }
+    automationTrackRun(runId, sessionId, turnId, automationId, automationName);
     const found = automations.listRuns({ limit: 100 }).runs.find((r) => r.runId === runId);
     res.json({ run: found || { ...base, status: "started" } });
   } catch (e) {
