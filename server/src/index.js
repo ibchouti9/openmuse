@@ -800,7 +800,7 @@ try {
 app.post("/api/automations", (req, res) => {
   try {
     const { randomUUID } = require("node:crypto");
-    const { name, everyMinutes, sessionId, prompt, enabled = true, webhookUrl = null, timeoutMin = null } = req.body || {};
+    const { name, everyMinutes, sessionId, prompt, enabled = true, webhookUrl = null, timeoutMin = null, catchUp = null } = req.body || {};
     if (typeof name !== "string" || !name.trim()) return res.status(400).json({ error: "name required" });
     // Floor of 1 minute: sub-minute recurrence against a real metered model
     // is a spend hose. The scheduler additionally clamps to 5s internally.
@@ -826,11 +826,15 @@ app.post("/api/automations", (req, res) => {
     if (timeoutMin !== null && (!Number.isFinite(Number(timeoutMin)) || Number(timeoutMin) <= 0)) {
       return res.status(400).json({ error: "timeoutMin must be a positive number" });
     }
+    if (catchUp !== null && typeof catchUp !== "boolean") {
+      return res.status(400).json({ error: "catchUp must be a boolean" });
+    }
     const automation = {
       automationId: randomUUID(), name: name.trim(), everyMinutes: Number(everyMinutes),
       sessionId, prompt: prompt.slice(0, 4000), enabled: enabled !== false,
       webhookUrl: webhookUrl === null ? null : String(webhookUrl),
       timeoutMin: timeoutMin === null ? null : Number(timeoutMin),
+      ...(catchUp === true ? { catchUp: true } : {}),
       createdAt: new Date().toISOString(),
     };
     automations.saveAutomation(automation);
