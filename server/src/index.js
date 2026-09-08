@@ -103,6 +103,7 @@ function automationRunEvent(method, params) {
   if (!tracked) return;
   automationTurns.delete(params.turnId);
   if (tracked.automationId) automationRunning.delete(tracked.automationId);
+  clearRunTimer(tracked.runId);
   // A cancel that won the race owns the terminal state; a stale host
   // completion arriving after must not overwrite "cancelled".
   try {
@@ -127,6 +128,7 @@ function automationRunEvent(method, params) {
     /* ledger write failure must not kill the event path */
   }
   broadcast("msp", { method: status === "completed" ? "run/completed" : "run/failed", params: rec });
+  void fireWebhook(rec);
 }
 
 function sendError(res, err) {
@@ -509,7 +511,7 @@ app.get("/api/automations/runs", (req, res) => {
 });
 app.post("/api/automations/runs", async (req, res) => {
   try {
-    const { sessionId, prompt, automationId = null, automationName = null, idempotencyKey = null } = req.body || {};
+    const { sessionId, prompt, automationId = null, automationName = null, idempotencyKey = null, timeoutMin = null } = req.body || {};
     if (typeof sessionId !== "string" || !sessionId.trim()) {
       return res.status(400).json({ error: "sessionId required" });
     }
@@ -519,7 +521,10 @@ app.post("/api/automations/runs", async (req, res) => {
     if (idempotencyKey !== null && (typeof idempotencyKey !== "string" || !idempotencyKey)) {
       return res.status(400).json({ error: "idempotencyKey must be a non-empty string" });
     }
-    const out = await startAutomationRun({ sessionId, prompt, automationId, automationName, idempotencyKey });
+    if (timeoutMin !== undefined && timeoutMin !== null && (!Number.isFinite(Number(timeoutMin)) || Number(timeoutMin) <= 0)) {
+      return res.status(400).json({ error: "timeoutMin must be a positive number" });
+    }
+    const out = await startAutomationRun({ sessionId, prompt, automationId, automationName, idempotencyKey, timeoutMin: timeoutMin ?? null });
     if (out.deduped) return res.json({ run: out.run, deduped: true });
     if (out.failed) return res.status(502).json({ run: out.run, error: out.run.error });
     res.json({ run: out.run });
@@ -530,7 +535,7 @@ app.post("/api/automations/runs", async (req, res) => {
 
 // Shared run starter for manual triggers and scheduler ticks. Records the
 // created -> started/failed lifecycle and arms SSE tracking.
-async function startAutomationRun({ sessionId, prompt, automationId = null, automationName = null, idempotencyKey = null }) {
+async function startAutomationRun({ sessionId, prompt, automationId = null, automationName = null, idempotencyKey = null, timeoutMin = null }) {
   const { randomUUID } = require("node:crypto");
   if (idempotencyKey) {
     const prior = automations.findRunByKey(idempotencyKey);
@@ -555,8 +560,112 @@ async function startAutomationRun({ sessionId, prompt, automationId = null, auto
     return { failed: true, run: failed };
   }
   automationTrackRun(runId, sessionId, turnId, automationId, automationName, base.prompt, base.idempotencyKey);
+  armRunTimeout({ runId }, timeoutMin);
   const found = automations.listRuns({ limit: 100 }).runs.find((r) => r.runId === runId);
   return { run: found || { ...base, status: "started", turnId } };
+}
+
+// ---- automation run timeouts + completion webhooks ----
+const RUN_TERMINAL = ["completed", "failed", "cancelled", "skipped"];
+const runTimers = new Map();
+function effectiveTimeoutMin(explicit) {
+  if (explicit !== undefined && explicit !== null) return Number(explicit);
+  return Number(process.env.OPENMUSE_RUN_TIMEOUT_MIN || 10);
+}
+function clearRunTimer(runId) {
+  const t = runTimers.get(runId);
+  if (t) {
+    clearTimeout(t);
+    runTimers.delete(runId);
+  }
+}
+function armRunTimeout(ctx, timeoutMin) {
+  clearRunTimer(ctx.runId);
+  const mins = effectiveTimeoutMin(timeoutMin);
+  if (!Number.isFinite(mins) || mins <= 0) return;
+  runTimers.set(
+    ctx.runId,
+    setTimeout(() => {
+      runTimers.delete(ctx.runId);
+      void cancelRun(ctx.runId, `timeout after ${mins} min`).catch(() => {});
+    }, mins * 60000),
+  );
+}
+
+// Best-effort terminal-state webhook to the owning def's webhookUrl.
+// Failures log and never fail the run path.
+async function fireWebhook(rec) {
+  try {
+    if (!rec || !rec.automationId) return;
+    const def = automations.getAutomation(rec.automationId);
+    const url = def && def.webhookUrl ? String(def.webhookUrl) : "";
+    if (!url) return;
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") {
+      console.log(`[openmuse] automation webhook skipped (non-http url) for ${rec.runId}`);
+      return;
+    }
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 10000);
+    try {
+      await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: rec.runId, automationId: rec.automationId, automationName: rec.automationName || null,
+          status: rec.status, terminal: rec.terminal || null, sessionId: rec.sessionId || null,
+          turnId: rec.turnId || null, finishedAt: rec.createdAt,
+        }),
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(t);
+    }
+  } catch (e) {
+    console.log(`[openmuse] automation webhook failed for ${rec && rec.runId}: ${(e && e.message) || e}`);
+  }
+}
+
+// Shared cancel: ledger-cancelled record, host interrupt, untrack, webhook.
+// Throws {status, message, run?} for HTTP mapping.
+async function cancelRun(runId, reason = null) {
+  const all = automations.readRecords().filter((r) => r && r.type === "run" && r.runId === runId);
+  if (!all.length) {
+    const e = new Error("run not found");
+    e.status = 404;
+    throw e;
+  }
+  const cur = all[all.length - 1];
+  if (RUN_TERMINAL.includes(cur.status)) {
+    const e = new Error(`run already ${cur.status}`);
+    e.status = 409;
+    e.run = cur;
+    throw e;
+  }
+  const rec = {
+    type: "run", runId: cur.runId, sessionId: cur.sessionId || null,
+    turnId: cur.turnId || null, automationId: cur.automationId || null,
+    automationName: cur.automationName || null, idempotencyKey: cur.idempotencyKey || null,
+    createdAt: new Date().toISOString(), prompt: cur.prompt, status: "cancelled",
+  };
+  if (reason) rec.reason = reason;
+  automations.appendRecord(rec);
+  clearRunTimer(runId);
+  // Untrack first so the host's turn/completed(cancelled) cannot overwrite.
+  for (const [tid, t] of automationTurns) {
+    if (t.runId === runId) automationTurns.delete(tid);
+  }
+  if (cur.automationId) automationRunning.delete(cur.automationId);
+  if (cur.sessionId) {
+    try {
+      await host.turnInterrupt(cur.sessionId, cur.turnId || undefined);
+    } catch {
+      /* run is already terminal in the ledger; host best-effort */
+    }
+  }
+  broadcast("msp", { method: "run/cancelled", params: rec });
+  void fireWebhook(rec);
+  return rec;
 }
 
 // ---- automation interval scheduler ----
@@ -611,6 +720,7 @@ async function schedulerTick(automationId) {
   automationRunning.add(automationId);
   const out = await startAutomationRun({
     sessionId: def.sessionId, prompt: def.prompt, automationId, automationName: def.name,
+    timeoutMin: def.timeoutMin ?? null,
   }).catch((e) => ({ failed: true, run: null, error: (e && e.message) || "scheduler tick failed" }));
   if (out.failed || !out.run || !out.run.turnId) {
     // Nothing to wait on: release the guard now. Live runs release it in
@@ -626,7 +736,7 @@ try {
 app.post("/api/automations", (req, res) => {
   try {
     const { randomUUID } = require("node:crypto");
-    const { name, everyMinutes, sessionId, prompt, enabled = true } = req.body || {};
+    const { name, everyMinutes, sessionId, prompt, enabled = true, webhookUrl = null, timeoutMin = null } = req.body || {};
     if (typeof name !== "string" || !name.trim()) return res.status(400).json({ error: "name required" });
     // Floor of 1 minute: sub-minute recurrence against a real metered model
     // is a spend hose. The scheduler additionally clamps to 5s internally.
@@ -639,9 +749,24 @@ app.post("/api/automations", (req, res) => {
     if (typeof prompt !== "string" || !prompt.trim()) {
       return res.status(400).json({ error: "prompt required" });
     }
+    if (webhookUrl !== null) {
+      let ok = false;
+      try {
+        const u = new URL(String(webhookUrl));
+        ok = u.protocol === "http:" || u.protocol === "https:";
+      } catch {
+        ok = false;
+      }
+      if (!ok) return res.status(400).json({ error: "webhookUrl must be an http(s) URL" });
+    }
+    if (timeoutMin !== null && (!Number.isFinite(Number(timeoutMin)) || Number(timeoutMin) <= 0)) {
+      return res.status(400).json({ error: "timeoutMin must be a positive number" });
+    }
     const automation = {
       automationId: randomUUID(), name: name.trim(), everyMinutes: Number(everyMinutes),
       sessionId, prompt: prompt.slice(0, 4000), enabled: enabled !== false,
+      webhookUrl: webhookUrl === null ? null : String(webhookUrl),
+      timeoutMin: timeoutMin === null ? null : Number(timeoutMin),
       createdAt: new Date().toISOString(),
     };
     automations.saveAutomation(automation);
@@ -671,34 +796,14 @@ app.delete("/api/automations/:id", (req, res) => {
 });
 app.post("/api/automations/runs/:id/cancel", async (req, res) => {
   try {
-    const all = automations.readRecords().filter((r) => r && r.type === "run" && r.runId === req.params.id);
-    if (!all.length) return res.status(404).json({ error: "run not found" });
-    const cur = all[all.length - 1];
-    if (["completed", "failed", "cancelled", "skipped"].includes(cur.status)) {
-      return res.status(409).json({ error: `run already ${cur.status}`, run: cur });
+    const { reason = null } = req.body || {};
+    if (reason !== null && (typeof reason !== "string" || !reason)) {
+      return res.status(400).json({ error: "reason must be a non-empty string" });
     }
-    const rec = {
-      type: "run", runId: cur.runId, sessionId: cur.sessionId || null,
-      turnId: cur.turnId || null, automationId: cur.automationId || null,
-      automationName: cur.automationName || null, idempotencyKey: cur.idempotencyKey || null,
-      createdAt: new Date().toISOString(), prompt: cur.prompt || null, status: "cancelled",
-    };
-    automations.appendRecord(rec);
-    // Untrack first so the host's turn/completed(cancelled) cannot overwrite.
-    for (const [tid, t] of automationTurns) {
-      if (t.runId === cur.runId) automationTurns.delete(tid);
-    }
-    if (cur.automationId) automationRunning.delete(cur.automationId);
-    if (cur.sessionId) {
-      try {
-        await host.turnInterrupt(cur.sessionId, cur.turnId || undefined);
-      } catch {
-        /* run is already terminal in the ledger; host best-effort */
-      }
-    }
-    broadcast("msp", { method: "run/cancelled", params: rec });
-    res.json({ run: rec });
+    res.json({ run: await cancelRun(req.params.id, reason) });
   } catch (e) {
+    if (e && e.run) return res.status(e.status || 409).json({ error: e.message, run: e.run });
+    if (e && e.status) return res.status(e.status).json({ error: e.message });
     sendError(res, e);
   }
 });
