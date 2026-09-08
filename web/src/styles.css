@@ -4200,44 +4200,7 @@ input, textarea, select {
   text-overflow: ellipsis;
 }
 
-.automations-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  font-size: 11.5px;
-  font-weight: 600;
-  padding: 3px 10px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.automations-status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.automations-status.is-ok {
-  color: var(--good);
-  border-color: var(--good-border);
-  background: var(--good-soft);
-}
-
-.automations-status.is-failed {
-  color: var(--bad);
-  border-color: var(--bad-border);
-  background: var(--bad-soft);
-}
-
-.automations-status.is-running {
-  color: var(--accent);
-  border-color: var(--border-focus);
-  background: var(--accent-soft);
-}
+/* Automations status pills reuse Lumen's .auto-status-pill tokens. */
 
 .automations-empty {
   display: flex;

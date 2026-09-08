@@ -52,11 +52,11 @@ function loadMockAutomations(): Promise<AutomationDef[]> {
 }
 
 function outcomeClass(d: AutomationDef): string {
-  if (!d.enabled) return "is-idle";
+  if (!d.enabled) return "";
   if (d.lastOutcome === "completed") return "is-ok";
   if (d.lastOutcome === "failed") return "is-failed";
   if (d.lastOutcome === "started") return "is-running";
-  return "is-idle";
+  return "";
 }
 
 function outcomeLabel(d: AutomationDef): string {
@@ -144,8 +144,8 @@ export default function AutomationsView({
         <div className="automations-list" aria-live="polite">
           {defs.map((d) => (
             <div key={d.automationId} className="automation-row">
-              <span className={`automations-status ${outcomeClass(d)}`} title={outcomeLabel(d)}>
-                <span className="automations-status-dot" aria-hidden="true" />
+              <span className={`auto-status-pill ${outcomeClass(d)}`} title={outcomeLabel(d)}>
+                <span className="auto-status-dot" aria-hidden="true" />
                 <span>{outcomeLabel(d)}</span>
               </span>
               <div className="automation-main">
