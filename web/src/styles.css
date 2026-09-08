@@ -3886,23 +3886,7 @@ input, textarea, select {
   }
 }
 
-@media (max-width: 640px) {
-  .keyboard-shortcut-hint {
-    display: none;
-  }
-  .conversation-thread-scroll {
-    padding: 16px 16px 32px;
-  }
-  .composer-dock-container {
-    padding: 8px 12px 12px;
-  }
-  .automations-view {
-    padding: 20px 16px;
-  }
-  .hero-empty-container {
-    padding: 28px 16px;
-  }
-}
+/* (Small-screen rules live at end of file, after all base rules they override.) */
 
 /* ==========================================================================
    Antigravity-style Minimalist Thinking Block
@@ -4532,5 +4516,26 @@ textarea.builder-input {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* ==========================================================================
+   Small Screens (must stay last: source order beats equal-specificity bases)
+   ========================================================================== */
+@media (max-width: 640px) {
+  .keyboard-shortcut-hint {
+    display: none;
+  }
+  .conversation-thread-scroll {
+    padding: 16px 16px 32px;
+  }
+  .composer-dock-container {
+    padding: 8px 12px 12px;
+  }
+  .automations-view {
+    padding: 20px 16px;
+  }
+  .hero-empty-container {
+    padding: 28px 16px;
   }
 }
