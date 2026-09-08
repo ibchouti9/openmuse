@@ -3,7 +3,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { api, exportSession, ops, subscribe, turnCancel } from "./api";
 import BrowserPanel from "./BrowserPanel";
-import { applyItemDelta, groupThread, ThreadItem } from "./threading";
+import { applyItemDelta, groupThread, itemCarriesDelta, ThreadItem } from "./threading";
 
 import {
   CloseIcon,
@@ -489,7 +489,11 @@ export default function App() {
     const buffered = pendingDeltas.current.filter((d) => d.itemId === it.itemId);
     if (buffered.length > 0) {
       pendingDeltas.current = pendingDeltas.current.filter((d) => d.itemId !== it.itemId);
-      for (const d of buffered) it = applyItemDelta(it, d.field, d.delta);
+      for (const d of buffered) {
+        // Idempotent flush: the snapshot may already carry deltas that
+        // arrived before it did — re-applying doubles live text.
+        if (!itemCarriesDelta(it, d.field, d.delta)) it = applyItemDelta(it, d.field, d.delta);
+      }
     }
     setItems((xs) => {
       const i = xs.findIndex((x) => x.itemId === it.itemId);
