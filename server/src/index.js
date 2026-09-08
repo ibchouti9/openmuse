@@ -849,11 +849,85 @@ app.get("/api/automations", (req, res) => {
 });
 app.delete("/api/automations/:id", (req, res) => {
   try {
-    if (!automations.deleteAutomation(req.params.id)) {
+    const live = automations.readRecords().filter((r) => r && r.type === "run" && r.automationId === req.params.id);
+    const lastByRun = new Map();
+    for (const r of live) lastByRun.set(r.runId, r);
+    const pending = [...lastByRun.keys()];
+    if (!automations.deleteAutomation(req.params.id) && pending.length === 0) {
       return res.status(404).json({ error: "automation not found" });
     }
     unscheduleAutomation(req.params.id);
+    // Deterministic end for live runs: cancel rather than orphan.
+    void (async () => {
+      for (const runId of pending) {
+        try {
+          await cancelRun(runId, "def deleted");
+        } catch {
+          /* already terminal; ledger already says so */
+        }
+      }
+    })();
     res.json({ ok: true });
+  } catch (e) {
+    sendError(res, e);
+  }
+});
+app.patch("/api/automations/:id", (req, res) => {
+  try {
+    const cur = automations.getAutomation(req.params.id);
+    if (!cur) return res.status(404).json({ error: "automation not found" });
+    const { name, everyMinutes, sessionId, prompt, enabled, webhookUrl, timeoutMin, catchUp } = req.body || {};
+    const next = { ...cur };
+    if (name !== undefined) {
+      if (typeof name !== "string" || !name.trim()) return res.status(400).json({ error: "name must be a non-empty string" });
+      next.name = name.trim();
+    }
+    if (everyMinutes !== undefined) {
+      if (!Number.isFinite(Number(everyMinutes)) || Number(everyMinutes) < 1) {
+        return res.status(400).json({ error: "everyMinutes must be a number >= 1" });
+      }
+      next.everyMinutes = Number(everyMinutes);
+    }
+    if (sessionId !== undefined) {
+      if (typeof sessionId !== "string" || !sessionId.trim()) return res.status(400).json({ error: "sessionId must be a non-empty string" });
+      next.sessionId = sessionId;
+    }
+    if (prompt !== undefined) {
+      if (typeof prompt !== "string" || !prompt.trim()) return res.status(400).json({ error: "prompt must be a non-empty string" });
+      next.prompt = prompt.slice(0, 4000);
+    }
+    if (enabled !== undefined) next.enabled = enabled !== false;
+    if (webhookUrl !== undefined) {
+      if (webhookUrl !== null) {
+        let ok = false;
+        try {
+          const u = new URL(String(webhookUrl));
+          ok = u.protocol === "http:" || u.protocol === "https:";
+        } catch {
+          ok = false;
+        }
+        if (!ok) return res.status(400).json({ error: "webhookUrl must be an http(s) URL" });
+        next.webhookUrl = String(webhookUrl);
+      } else {
+        next.webhookUrl = null;
+      }
+    }
+    if (timeoutMin !== undefined) {
+      if (timeoutMin !== null && (!Number.isFinite(Number(timeoutMin)) || Number(timeoutMin) <= 0)) {
+        return res.status(400).json({ error: "timeoutMin must be a positive number" });
+      }
+      next.timeoutMin = timeoutMin === null ? null : Number(timeoutMin);
+    }
+    if (catchUp !== undefined) {
+      if (catchUp !== null && typeof catchUp !== "boolean") {
+        return res.status(400).json({ error: "catchUp must be a boolean" });
+      }
+      if (catchUp === null) delete next.catchUp;
+      else next.catchUp = catchUp;
+    }
+    automations.saveAutomation(next);
+    scheduleAutomation(next);
+    res.json({ automation: next });
   } catch (e) {
     sendError(res, e);
   }
