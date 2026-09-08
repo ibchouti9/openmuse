@@ -4180,6 +4180,7 @@ input, textarea, select {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1;
 }
 
 .automation-name {
@@ -4222,4 +4223,50 @@ input, textarea, select {
   font-size: 13px;
   color: var(--text-secondary);
   margin-bottom: 8px;
+}
+
+.automations-note-error {
+  font-size: 12.5px;
+  color: var(--bad);
+  background: var(--bad-soft);
+  border: 1px solid var(--bad-border);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+}
+
+.automation-switch {
+  flex-shrink: 0;
+  width: 38px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-default);
+  background: rgba(255, 255, 255, 0.08);
+  position: relative;
+  transition: background var(--dur-fast) var(--ease-spring);
+  align-self: center;
+}
+
+.automation-switch.on {
+  background: var(--accent-deep);
+  border-color: transparent;
+}
+
+.automation-switch:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.automation-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left var(--dur-fast) var(--ease-spring);
+}
+
+.automation-switch.on .automation-switch-thumb {
+  left: 18px;
 }
