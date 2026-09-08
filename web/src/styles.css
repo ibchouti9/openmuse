@@ -1913,18 +1913,24 @@ input, textarea, select {
 .popover-select {
   width: 100%;
   padding: 7px 10px;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-size: 12px;
+  font-weight: 500;
   outline: none;
   cursor: pointer;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.popover-select:hover {
+  border-color: var(--border-hover);
 }
 
 .popover-select:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
 }
 
 .popover-select option {
@@ -2521,6 +2527,17 @@ input, textarea, select {
   font-size: 13px;
   color: var(--text-primary);
   min-width: 180px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.settings-select-input:hover, .settings-text-input:hover {
+  border-color: var(--border-hover);
+}
+
+.settings-select-input:focus, .settings-text-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
 }
 
 .settings-text-input.number {
