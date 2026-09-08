@@ -63,6 +63,9 @@ export default function MessageActions({
       >
         {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
         <span>{copied ? "Copied" : "Copy"}</span>
+        <span className="sr-only" role="status">
+          {copied ? "Copied to clipboard" : ""}
+        </span>
       </button>
 
       {isUser && onEdit && (

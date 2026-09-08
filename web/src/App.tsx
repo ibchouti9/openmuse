@@ -109,16 +109,34 @@ function Markdown({ text }: { text: string }) {
     if (!el) return;
     const btn = el as HTMLButtonElement;
     const code = decodeURIComponent(el.getAttribute("data-code") || "");
-    navigator.clipboard
-      ?.writeText(code)
-      ?.then(() => {
-        btn.textContent = "✓ Copied";
-        setTimeout(() => (btn.textContent = "Copy"), 1400);
-      })
-      ?.catch(() => {
-        btn.textContent = "Copy failed";
-        setTimeout(() => (btn.textContent = "Copy"), 1400);
-      });
+    const flash = (msg: string) => {
+      btn.textContent = msg;
+      setTimeout(() => (btn.textContent = "Copy"), 1400);
+    };
+    const legacyCopy = (t: string) => {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = t;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        flash(document.execCommand("copy") ? "✓ Copied" : "Copy failed");
+        document.body.removeChild(ta);
+      } catch {
+        flash("Copy failed");
+      }
+    };
+    try {
+      const p = navigator.clipboard?.writeText(code);
+      if (p) {
+        p.then(() => flash("✓ Copied")).catch(() => legacyCopy(code));
+        return;
+      }
+    } catch {
+      /* fall through to legacy fallback */
+    }
+    legacyCopy(code);
   }
 
   return <div className="md-content" onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />;
