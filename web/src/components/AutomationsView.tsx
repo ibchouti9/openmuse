@@ -51,6 +51,14 @@ function loadMockAutomations(): Promise<AutomationDef[]> {
   });
 }
 
+// Mock toggle: resolves after a beat. Step 3 swaps this seam for
+// PATCH /api/automations/:id (Kernel PR #13, still open).
+function mockToggleAutomation(): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 300);
+  });
+}
+
 function outcomeClass(d: AutomationDef): string {
   if (!d.enabled) return "";
   if (d.lastOutcome === "completed") return "is-ok";
@@ -72,13 +80,33 @@ function outcomeLabel(d: AutomationDef): string {
 export default function AutomationsView({
   onClose,
   loader = loadMockAutomations,
+  onToggle = mockToggleAutomation,
 }: {
   onClose: () => void;
   loader?: () => Promise<AutomationDef[]>;
+  onToggle?: (automationId: string, enabled: boolean) => Promise<void>;
 }) {
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
   const [defs, setDefs] = useState<AutomationDef[]>([]);
   const [attempt, setAttempt] = useState(0);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
+
+  async function flip(d: AutomationDef) {
+    if (pendingId !== null) return;
+    setToggleError(null);
+    setPendingId(d.automationId);
+    setDefs((xs) => xs.map((x) => (x.automationId === d.automationId ? { ...x, enabled: !x.enabled } : x)));
+    try {
+      await onToggle(d.automationId, !d.enabled);
+    } catch {
+      // Revert the optimistic flip so the row never lies about server state.
+      setDefs((xs) => xs.map((x) => (x.automationId === d.automationId ? { ...x, enabled: d.enabled } : x)));
+      setToggleError(`Couldn't ${d.enabled ? "disable" : "enable"} "${d.name}" — try again.`);
+    } finally {
+      setPendingId(null);
+    }
+  }
 
   const load = useCallback(async () => {
     setPhase("loading");
@@ -142,6 +170,11 @@ export default function AutomationsView({
 
       {phase === "ready" && defs.length > 0 && (
         <div className="automations-list" aria-live="polite">
+          {toggleError && (
+            <p className="automations-note-error" role="alert">
+              {toggleError}
+            </p>
+          )}
           {defs.map((d) => (
             <div key={d.automationId} className="automation-row">
               <span className={`auto-status-pill ${outcomeClass(d)}`} title={outcomeLabel(d)}>
@@ -155,6 +188,17 @@ export default function AutomationsView({
                 </span>
                 <span className="automation-prompt">{d.prompt}</span>
               </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={d.enabled}
+                aria-label={`${d.enabled ? "Disable" : "Enable"} ${d.name}`}
+                className={`automation-switch ${d.enabled ? "on" : "off"}`}
+                disabled={pendingId !== null}
+                onClick={() => void flip(d)}
+              >
+                <span className="automation-switch-thumb" aria-hidden="true" />
+              </button>
             </div>
           ))}
         </div>
