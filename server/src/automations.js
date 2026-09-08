@@ -8,6 +8,8 @@ const os = require("node:os");
 const path = require("node:path");
 
 const MAX_LINES = 10000;
+const ROTATE_BYTES = 2 * 1024 * 1024;
+const ROTATE_KEEP_LINES = 5000;
 
 function dataDir() {
   const base = process.env.OPENMUSE_DATA_DIR || path.join(os.homedir(), ".openmuse");
@@ -19,10 +21,47 @@ function storePath() {
   return path.join(dataDir(), "automations.jsonl");
 }
 
-// Append one record; creates the store on first use.
+// Append one record; creates the store on first use. Best-effort rotation
+// keeps the file bounded (rotation failure never fails the append).
 function appendRecord(rec) {
   const line = JSON.stringify({ ...rec, v: 1 }) + "\n";
   fs.appendFileSync(storePath(), line, "utf8");
+  try {
+    maybeRotate();
+  } catch {
+    /* bounded-store failure must not fail the write path */
+  }
+}
+
+// Drop the oldest lines once the file passes maxBytes, keeping the newest
+// keepLines. The latest record per automationId is always pinned: defs must
+// survive rotation no matter how much run history piles up. Atomic swap
+// (tmp + rename) so readers never see a half file.
+function maybeRotate({ maxBytes = ROTATE_BYTES, keepLines = ROTATE_KEEP_LINES } = {}) {
+  let st = null;
+  try {
+    st = fs.statSync(storePath());
+  } catch {
+    return { rotated: false };
+  }
+  if (!st || st.size <= maxBytes) return { rotated: false };
+  const all = readRecords();
+  const pinIdx = new Set();
+  const lastSeen = new Map();
+  all.forEach((r, i) => {
+    if (r && r.type === "automation" && typeof r.automationId === "string") lastSeen.set(r.automationId, i);
+  });
+  for (const i of lastSeen.values()) pinIdx.add(i);
+  const rest = all
+    .map((_, i) => i)
+    .filter((i) => !pinIdx.has(i))
+    .slice(-Math.max(0, keepLines - pinIdx.size));
+  const keepIdx = new Set([...pinIdx, ...rest]);
+  const keep = all.filter((_, i) => keepIdx.has(i));
+  const tmp = `${storePath()}.tmp`;
+  fs.writeFileSync(tmp, keep.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
+  fs.renameSync(tmp, storePath());
+  return { rotated: true, kept: keep.length, dropped: all.length - keep.length, pinned: pinIdx.size };
 }
 
 // Read all well-formed records, oldest first. Skips blank/corrupt lines so a
@@ -77,4 +116,36 @@ function findRunByKey(idempotencyKey) {
   return all.length ? all[all.length - 1] : null;
 }
 
-module.exports = { appendRecord, readRecords, listRuns, findRunByKey, storePath, MAX_LINES };
+// ---- automation definitions (collapsed from the same append-only log) ----
+function saveAutomation(def) {
+  appendRecord({ ...def, type: "automation", updatedAt: new Date().toISOString() });
+}
+
+function listAutomations() {
+  const latest = new Map();
+  for (const r of readRecords()) {
+    if (r && r.type === "automation" && typeof r.automationId === "string") {
+      latest.set(r.automationId, r);
+    }
+  }
+  return [...latest.values()]
+    .filter((d) => !d.deleted)
+    .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+}
+
+function getAutomation(automationId) {
+  return listAutomations().find((d) => d.automationId === automationId) || null;
+}
+
+function deleteAutomation(automationId) {
+  const cur = getAutomation(automationId);
+  if (!cur) return false;
+  appendRecord({ type: "automation", automationId, deleted: true });
+  return true;
+}
+
+module.exports = {
+  appendRecord, readRecords, listRuns, findRunByKey,
+  saveAutomation, listAutomations, getAutomation, deleteAutomation,
+  maybeRotate, storePath, MAX_LINES,
+};
