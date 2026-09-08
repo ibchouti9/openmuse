@@ -120,6 +120,52 @@ function runOutcomeClass(outcome: AutomationRun["outcome"]): string {
   if (outcome === "started") return "is-running";
   return "";
 }
+// Mock create: resolves with a local def. Real POST /api/automations
+// integration follows once the defs endpoints are testable here.
+function mockCreateAutomation(input: {
+  name: string;
+  prompt: string;
+  everyMinutes: number;
+  sessionId: string;
+  enabled: boolean;
+  webhookUrl: string | null;
+  timeoutMin: number | null;
+}): Promise<AutomationDef> {
+  return new Promise((resolve) => {
+    setTimeout(
+      () =>
+        resolve({
+          automationId: `auto-local-${Date.now()}`,
+          name: input.name,
+          everyMinutes: input.everyMinutes,
+          sessionId: input.sessionId,
+          prompt: input.prompt,
+          enabled: input.enabled,
+          webhookUrl: input.webhookUrl,
+          lastOutcome: null,
+        }),
+      300,
+    );
+  });
+}
+
+const INTERVAL_PRESETS = [
+  { value: "15", label: "Every 15 minutes" },
+  { value: "30", label: "Every 30 minutes" },
+  { value: "60", label: "Every hour" },
+  { value: "360", label: "Every 6 hours" },
+  { value: "1440", label: "Daily" },
+];
+
+function validWebhook(raw: string): boolean {
+  if (!raw.trim()) return true;
+  try {
+    const u = new URL(raw.trim());
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 function fmtTime(iso: string): string {
   const d = new Date(iso);
@@ -169,11 +215,21 @@ export default function AutomationsView({
   loader = loadMockAutomations,
   onToggle = mockToggleAutomation,
   runsLoader = loadMockRuns,
+  onCreate = mockCreateAutomation,
 }: {
   onClose: () => void;
   loader?: () => Promise<AutomationDef[]>;
   onToggle?: (automationId: string, enabled: boolean) => Promise<void>;
   runsLoader?: (automationId: string) => Promise<AutomationRun[]>;
+  onCreate?: (input: {
+    name: string;
+    prompt: string;
+    everyMinutes: number;
+    sessionId: string;
+    enabled: boolean;
+    webhookUrl: string | null;
+    timeoutMin: number | null;
+  }) => Promise<AutomationDef>;
 }) {
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
   const [defs, setDefs] = useState<AutomationDef[]>([]);
@@ -183,6 +239,63 @@ export default function AutomationsView({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [runsById, setRunsById] = useState<Record<string, AutomationRun[]>>({});
   const [runsPendingId, setRunsPendingId] = useState<string | null>(null);
+  const [builderOpen, setBuilderOpen] = useState(false);
+  const [bName, setBName] = useState("");
+  const [bPrompt, setBPrompt] = useState("");
+  const [bPreset, setBPreset] = useState("60");
+  const [bCustom, setBCustom] = useState("45");
+  const [bAdvanced, setBAdvanced] = useState(false);
+  const [bWebhook, setBWebhook] = useState("");
+  const [bTimeout, setBTimeout] = useState("");
+  const [bEnabled, setBEnabled] = useState(true);
+  const [bSaving, setBSaving] = useState(false);
+  const [bError, setBError] = useState<string | null>(null);
+
+  const bMinutes = bPreset === "custom" ? Math.floor(Number(bCustom)) : Number(bPreset);
+  const bTimeoutNum = bTimeout.trim() === "" ? null : Number(bTimeout);
+  const bValid =
+    bName.trim().length > 0 &&
+    bPrompt.trim().length > 0 &&
+    Number.isFinite(bMinutes) &&
+    bMinutes >= 1 &&
+    validWebhook(bWebhook) &&
+    (bTimeoutNum === null || (Number.isFinite(bTimeoutNum) && bTimeoutNum > 0));
+
+  function resetBuilder() {
+    setBuilderOpen(false);
+    setBName("");
+    setBPrompt("");
+    setBPreset("60");
+    setBCustom("45");
+    setBAdvanced(false);
+    setBWebhook("");
+    setBTimeout("");
+    setBEnabled(true);
+    setBSaving(false);
+    setBError(null);
+  }
+
+  async function saveBuilder() {
+    if (!bValid || bSaving) return;
+    setBSaving(true);
+    setBError(null);
+    try {
+      const created = await onCreate({
+        name: bName.trim(),
+        prompt: bPrompt.trim(),
+        everyMinutes: bMinutes,
+        sessionId: "new",
+        enabled: bEnabled,
+        webhookUrl: bWebhook.trim() === "" ? null : bWebhook.trim(),
+        timeoutMin: bTimeoutNum,
+      });
+      setDefs((xs) => [created, ...xs]);
+      resetBuilder();
+    } catch {
+      setBError("Couldn't save this automation — try again.");
+      setBSaving(false);
+    }
+  }
 
   async function toggleHistory(d: AutomationDef) {
     if (expandedId === d.automationId) {
@@ -239,10 +352,143 @@ export default function AutomationsView({
           <h2 className="automations-title">Automations</h2>
           <p className="automations-subtitle">Scheduled prompts that run on their own</p>
         </div>
-        <button type="button" className="topbar-icon-btn" onClick={onClose} title="Back to chat" aria-label="Back to chat">
-          <CloseIcon size={14} />
-        </button>
+        <div className="automations-header-actions">
+          {!builderOpen && phase === "ready" && (
+            <button type="button" className="user-edit-btn primary" onClick={() => setBuilderOpen(true)}>
+              New automation
+            </button>
+          )}
+          <button type="button" className="topbar-icon-btn" onClick={onClose} title="Back to chat" aria-label="Back to chat">
+            <CloseIcon size={14} />
+          </button>
+        </div>
       </div>
+
+      {builderOpen && (
+        <div
+          className="automation-builder"
+          role="form"
+          aria-label="New automation"
+          onKeyDown={(e) => {
+            if (e.key === "Escape") resetBuilder();
+          }}
+        >
+          <label className="builder-field">
+            <span className="builder-label">Name</span>
+            <input
+              className="builder-input"
+              value={bName}
+              onChange={(e) => setBName(e.target.value)}
+              placeholder="e.g. Morning digest"
+              aria-label="Automation name"
+            />
+          </label>
+          <label className="builder-field">
+            <span className="builder-label">Prompt</span>
+            <textarea
+              className="builder-input"
+              rows={3}
+              value={bPrompt}
+              onChange={(e) => setBPrompt(e.target.value)}
+              placeholder="What should each run do?"
+              aria-label="Run prompt"
+            />
+          </label>
+          <div className="builder-row">
+            <label className="builder-field">
+              <span className="builder-label">Schedule</span>
+              <select
+                className="builder-input"
+                value={bPreset}
+                onChange={(e) => setBPreset(e.target.value)}
+                aria-label="Run interval"
+              >
+                {INTERVAL_PRESETS.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+                <option value="custom">Custom minutes…</option>
+              </select>
+            </label>
+            {bPreset === "custom" && (
+              <label className="builder-field">
+                <span className="builder-label">Minutes (≥ 1)</span>
+                <input
+                  className="builder-input"
+                  value={bCustom}
+                  onChange={(e) => setBCustom(e.target.value)}
+                  inputMode="numeric"
+                  aria-label="Custom interval in minutes"
+                />
+              </label>
+            )}
+            <div className="builder-field">
+              <span className="builder-label">Runs in</span>
+              <span className="builder-static">New session</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="builder-advanced-toggle"
+            aria-expanded={bAdvanced}
+            onClick={() => setBAdvanced((v) => !v)}
+          >
+            {bAdvanced ? "Hide advanced" : "Show advanced"}
+          </button>
+          {bAdvanced && (
+            <div className="builder-row">
+              <label className="builder-field">
+                <span className="builder-label">Webhook URL (optional)</span>
+                <input
+                  className="builder-input"
+                  value={bWebhook}
+                  onChange={(e) => setBWebhook(e.target.value)}
+                  placeholder="https://…"
+                  aria-label="Completion webhook URL"
+                />
+                {!validWebhook(bWebhook) && (
+                  <span className="builder-hint-error">Must be an http(s) URL.</span>
+                )}
+              </label>
+              <label className="builder-field">
+                <span className="builder-label">Timeout minutes (optional)</span>
+                <input
+                  className="builder-input"
+                  value={bTimeout}
+                  onChange={(e) => setBTimeout(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="10"
+                  aria-label="Run timeout in minutes"
+                />
+              </label>
+            </div>
+          )}
+          <label className="builder-check">
+            <input type="checkbox" checked={bEnabled} onChange={(e) => setBEnabled(e.target.checked)} />
+            <span>Enabled on save</span>
+          </label>
+          {bError && (
+            <p className="automations-note-error" role="alert">
+              {bError}
+            </p>
+          )}
+          <div className="user-edit-actions">
+            <button
+              type="button"
+              className="user-edit-btn primary"
+              disabled={!bValid || bSaving}
+              title="Save automation"
+              onClick={() => void saveBuilder()}
+            >
+              {bSaving ? "Saving…" : "Save automation"}
+            </button>
+            <button type="button" className="user-edit-btn" title="Discard (Esc)" onClick={resetBuilder}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {phase === "loading" && (
         <div className="automations-list" aria-live="polite" aria-busy="true">
