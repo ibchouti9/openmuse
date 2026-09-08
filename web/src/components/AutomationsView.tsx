@@ -365,7 +365,14 @@ export default function AutomationsView({
       </div>
 
       {builderOpen && (
-        <div className="automation-builder" role="form" aria-label="New automation">
+        <div
+          className="automation-builder"
+          role="form"
+          aria-label="New automation"
+          onKeyDown={(e) => {
+            if (e.key === "Escape") resetBuilder();
+          }}
+        >
           <label className="builder-field">
             <span className="builder-label">Name</span>
             <input
