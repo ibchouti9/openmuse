@@ -6,6 +6,7 @@ import {
   RefreshCwIcon,
   CheckIcon,
   SparklesIcon,
+  ChevronRightIcon,
 } from "./Icons";
 import { ops } from "../api";
 
@@ -25,6 +26,46 @@ export interface GitStatus {
   files?: { path: string; code: string; staged: boolean; unstaged: boolean; untracked: boolean }[];
 }
 
+type DiffLine =
+  | { kind: "hunk"; text: string }
+  | { kind: "add"; text: string }
+  | { kind: "del"; text: string }
+  | { kind: "ctx"; text: string };
+
+// Minimal unified-diff parser: hunk headers, +/-/context. File headers
+// (diff --git, +++/---) are dropped; the panel header shows the path.
+export function parseUnifiedDiff(raw: string): DiffLine[] {
+  const out: DiffLine[] = [];
+  for (const line of String(raw || "").split("\n")) {
+    if (line.startsWith("@@")) out.push({ kind: "hunk", text: line });
+    else if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff --git")) continue;
+    else if (line.startsWith("+")) out.push({ kind: "add", text: line.slice(1) });
+    else if (line.startsWith("-")) out.push({ kind: "del", text: line.slice(1) });
+    else out.push({ kind: "ctx", text: line.startsWith(" ") ? line.slice(1) : line });
+  }
+  return out.filter((l) => !(l.kind === "ctx" && l.text === "" && out.indexOf(l) === out.length - 1));
+}
+
+const MOCK_DIFF = `@@ -12,7 +12,8 @@ export default function Composer({
+   busy,
+   models,
+   model,
+-  onModel,
++  onModel: onModelProp,
++  effort,
+   onEffort,
+   approvalMode,
+   onApproval,`;
+
+// Mock file diff. The real GET /api/git/diff plugs into the diffLoader
+// seam once it lands on main.
+function loadMockDiff(path: string): Promise<{ diff: string; truncated: boolean }> {
+  void path;
+  return new Promise((resolve) => {
+    setTimeout(() => resolve({ diff: MOCK_DIFF, truncated: false }), 300);
+  });
+}
+
 export default function GitMenu({
   status,
   loading,
@@ -35,6 +76,7 @@ export default function GitMenu({
   onPr,
   busyAction,
   note,
+  diffLoader = loadMockDiff,
 }: {
   status: GitStatus | null;
   loading: boolean;
@@ -45,14 +87,39 @@ export default function GitMenu({
   onPr: (title: string, body: string) => void;
   busyAction: string | null;
   note: string | null;
+  diffLoader?: (path: string) => Promise<{ diff: string; truncated: boolean }>;
 }) {
   const [message, setMessage] = useState("");
   const [prTitle, setPrTitle] = useState("");
   const [prBody, setPrBody] = useState("");
   const [showPr, setShowPr] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [diffPath, setDiffPath] = useState<string | null>(null);
+  const [diffPhase, setDiffPhase] = useState<"loading" | "ready" | "error">("ready");
+  const [diffText, setDiffText] = useState("");
+  const [diffTruncated, setDiffTruncated] = useState(false);
   const busyAny = busyAction != null || generating;
   const changes = status?.total || 0;
+
+  async function openDiff(path: string, untracked: boolean) {
+    setDiffPath(path);
+    if (untracked) {
+      // Ruling: untracked files are a graceful not-shown row, no endpoint.
+      setDiffPhase("ready");
+      setDiffText("");
+      setDiffTruncated(false);
+      return;
+    }
+    setDiffPhase("loading");
+    try {
+      const r = await diffLoader(path);
+      setDiffText(r.diff);
+      setDiffTruncated(r.truncated);
+      setDiffPhase("ready");
+    } catch {
+      setDiffPhase("error");
+    }
+  }
 
   async function generateMessage() {
     if (generating || changes === 0) return;
@@ -114,11 +181,17 @@ export default function GitMenu({
         <p className="git-empty-note">This workspace folder is not currently a git repository.</p>
       )}
 
-      {status?.repo && changes > 0 && (
+      {status?.repo && changes > 0 && diffPath === null && (
         <div className="git-files-container">
           <div className="git-files-list">
             {(status.files || []).map((f) => (
-              <div key={f.path} className="git-file-row" title={f.path}>
+              <button
+                key={f.path}
+                type="button"
+                className="git-file-row as-button"
+                title={`${f.path} — show diff`}
+                onClick={() => void openDiff(f.path, f.untracked)}
+              >
                 <span
                   className={`git-file-badge ${
                     f.untracked ? "untracked" : f.staged ? "staged" : "modified"
@@ -127,13 +200,64 @@ export default function GitMenu({
                   {f.untracked ? "?" : f.staged ? "S" : "M"}
                 </span>
                 <span className="git-file-path">{f.path}</span>
-              </div>
+                <ChevronRightIcon size={13} className="git-file-chevron" />
+              </button>
             ))}
           </div>
           {status.truncated && (
             <p className="git-truncated-note">
               Showing first {(status.files || []).length} of {changes} changed files.
             </p>
+          )}
+        </div>
+      )}
+
+      {status?.repo && changes > 0 && diffPath !== null && (
+        <div className="git-diff-panel" aria-live="polite">
+          <div className="git-diff-header">
+            <button
+              type="button"
+              className="git-diff-back-btn"
+              onClick={() => setDiffPath(null)}
+              title="Back to changed files"
+            >
+              ← Files
+            </button>
+            <span className="git-diff-path font-mono" title={diffPath}>
+              {diffPath}
+            </span>
+          </div>
+          {diffPhase === "loading" && <p className="git-diff-loading">Loading diff…</p>}
+          {diffPhase === "error" && (
+            <div className="git-diff-empty">
+              <p>Couldn&apos;t load this diff.</p>
+              <button
+                type="button"
+                className="user-edit-btn primary"
+                onClick={() => {
+                  const f = (status.files || []).find((x) => x.path === diffPath);
+                  void openDiff(diffPath, !!f?.untracked);
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+          {diffPhase === "ready" && diffText === "" && (
+            <p className="git-diff-loading">Diff preview isn&apos;t shown for untracked files.</p>
+          )}
+          {diffPhase === "ready" && diffText !== "" && (
+            <div className="git-diff-body" role="table" aria-label={`Diff for ${diffPath}`}>
+              {parseUnifiedDiff(diffText).map((l, i) => (
+                <div key={i} role="row" className={`git-diff-line is-${l.kind}`}>
+                  <span className="git-diff-gutter" aria-hidden="true">
+                    {l.kind === "add" ? "+" : l.kind === "del" ? "−" : ""}
+                  </span>
+                  <code>{l.text}</code>
+                </div>
+              ))}
+              {diffTruncated && <p className="git-truncated-note">Diff truncated — showing the first part.</p>}
+            </div>
           )}
         </div>
       )}
