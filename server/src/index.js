@@ -92,9 +92,9 @@ host.on("notification", (msg) => {
 // step can heal). Frames reuse the "msp" event name so existing subscribers
 // receive run/* with no client changes.
 const automationTurns = new Map();
-function automationTrackRun(runId, sessionId, turnId, automationId, automationName) {
+function automationTrackRun(runId, sessionId, turnId, automationId, automationName, prompt = null, idempotencyKey = null) {
   if (!turnId) return;
-  automationTurns.set(turnId, { runId, sessionId, automationId, automationName });
+  automationTurns.set(turnId, { runId, sessionId, automationId, automationName, prompt, idempotencyKey });
   broadcast("msp", { method: "run/started", params: { runId, sessionId, turnId, automationId, automationName } });
 }
 function automationRunEvent(method, params) {
@@ -108,7 +108,9 @@ function automationRunEvent(method, params) {
   const rec = {
     type: "run", runId: tracked.runId, sessionId: tracked.sessionId,
     turnId: params.turnId, automationId: tracked.automationId,
-    automationName: tracked.automationName, createdAt, status, terminal,
+    automationName: tracked.automationName, prompt: tracked.prompt || null,
+    idempotencyKey: tracked.idempotencyKey || null,
+    createdAt, status, terminal,
   };
   try {
     automations.appendRecord(rec);
@@ -531,7 +533,7 @@ app.post("/api/automations/runs", async (req, res) => {
       broadcast("msp", { method: "run/failed", params: failed });
       return res.status(502).json({ run: failed, error: failed.error });
     }
-    automationTrackRun(runId, sessionId, turnId, automationId, automationName);
+    automationTrackRun(runId, sessionId, turnId, automationId, automationName, base.prompt, base.idempotencyKey);
     const found = automations.listRuns({ limit: 100 }).runs.find((r) => r.runId === runId);
     res.json({ run: found || { ...base, status: "started" } });
   } catch (e) {
