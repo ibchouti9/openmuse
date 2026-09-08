@@ -540,6 +540,48 @@ app.post("/api/automations/runs", async (req, res) => {
     sendError(res, e);
   }
 });
+app.post("/api/automations", (req, res) => {
+  try {
+    const { randomUUID } = require("node:crypto");
+    const { name, everyMinutes, sessionId, prompt, enabled = true } = req.body || {};
+    if (typeof name !== "string" || !name.trim()) return res.status(400).json({ error: "name required" });
+    if (!Number.isFinite(Number(everyMinutes)) || Number(everyMinutes) <= 0) {
+      return res.status(400).json({ error: "everyMinutes must be a positive number" });
+    }
+    if (typeof sessionId !== "string" || !sessionId.trim()) {
+      return res.status(400).json({ error: "sessionId required" });
+    }
+    if (typeof prompt !== "string" || !prompt.trim()) {
+      return res.status(400).json({ error: "prompt required" });
+    }
+    const automation = {
+      automationId: randomUUID(), name: name.trim(), everyMinutes: Number(everyMinutes),
+      sessionId, prompt: prompt.slice(0, 4000), enabled: enabled !== false,
+      createdAt: new Date().toISOString(),
+    };
+    automations.saveAutomation(automation);
+    res.json({ automation });
+  } catch (e) {
+    sendError(res, e);
+  }
+});
+app.get("/api/automations", (req, res) => {
+  try {
+    res.json({ automations: automations.listAutomations() });
+  } catch (e) {
+    sendError(res, e);
+  }
+});
+app.delete("/api/automations/:id", (req, res) => {
+  try {
+    if (!automations.deleteAutomation(req.params.id)) {
+      return res.status(404).json({ error: "automation not found" });
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    sendError(res, e);
+  }
+});
 
 // ---- CLI-ops parity (shell out to local muse binary) ----
 const cli = require("./cli");
