@@ -102,6 +102,15 @@ function automationRunEvent(method, params) {
   const tracked = automationTurns.get(params.turnId);
   if (!tracked) return;
   automationTurns.delete(params.turnId);
+  if (tracked.automationId) automationRunning.delete(tracked.automationId);
+  // A cancel that won the race owns the terminal state; a stale host
+  // completion arriving after must not overwrite "cancelled".
+  try {
+    const prior = automations.readRecords().filter((r) => r && r.type === "run" && r.runId === tracked.runId);
+    if (prior.length && prior[prior.length - 1].status === "cancelled") return;
+  } catch {
+    /* fall through and record the completion */
+  }
   const terminal = params.terminal || "completed";
   const status = terminal === "completed" ? "completed" : "failed";
   const createdAt = new Date().toISOString();
@@ -500,7 +509,6 @@ app.get("/api/automations/runs", (req, res) => {
 });
 app.post("/api/automations/runs", async (req, res) => {
   try {
-    const { randomUUID } = require("node:crypto");
     const { sessionId, prompt, automationId = null, automationName = null, idempotencyKey = null } = req.body || {};
     if (typeof sessionId !== "string" || !sessionId.trim()) {
       return res.status(400).json({ error: "sessionId required" });
@@ -511,35 +519,110 @@ app.post("/api/automations/runs", async (req, res) => {
     if (idempotencyKey !== null && (typeof idempotencyKey !== "string" || !idempotencyKey)) {
       return res.status(400).json({ error: "idempotencyKey must be a non-empty string" });
     }
-    if (idempotencyKey) {
-      const prior = automations.findRunByKey(idempotencyKey);
-      if (prior) return res.json({ run: prior, deduped: true });
-    }
-    const runId = randomUUID();
-    const createdAt = new Date().toISOString();
-    const base = {
-      type: "run", runId, automationId, automationName, sessionId,
-      idempotencyKey, createdAt, prompt: prompt.slice(0, 4000),
-    };
-    automations.appendRecord({ ...base, status: "created" });
-    let turnId = null;
-    try {
-      const started = await host.turnStart(sessionId, prompt, {});
-      turnId = started && started.turnId ? started.turnId : null;
-      automations.appendRecord({ ...base, status: "started", turnId });
-    } catch (e) {
-      const failed = { ...base, status: "failed", error: (e && e.message) || "turn start failed" };
-      automations.appendRecord(failed);
-      broadcast("msp", { method: "run/failed", params: failed });
-      return res.status(502).json({ run: failed, error: failed.error });
-    }
-    automationTrackRun(runId, sessionId, turnId, automationId, automationName, base.prompt, base.idempotencyKey);
-    const found = automations.listRuns({ limit: 100 }).runs.find((r) => r.runId === runId);
-    res.json({ run: found || { ...base, status: "started" } });
+    const out = await startAutomationRun({ sessionId, prompt, automationId, automationName, idempotencyKey });
+    if (out.deduped) return res.json({ run: out.run, deduped: true });
+    if (out.failed) return res.status(502).json({ run: out.run, error: out.run.error });
+    res.json({ run: out.run });
   } catch (e) {
     sendError(res, e);
   }
 });
+
+// Shared run starter for manual triggers and scheduler ticks. Records the
+// created -> started/failed lifecycle and arms SSE tracking.
+async function startAutomationRun({ sessionId, prompt, automationId = null, automationName = null, idempotencyKey = null }) {
+  const { randomUUID } = require("node:crypto");
+  if (idempotencyKey) {
+    const prior = automations.findRunByKey(idempotencyKey);
+    if (prior) return { deduped: true, run: prior };
+  }
+  const runId = randomUUID();
+  const createdAt = new Date().toISOString();
+  const base = {
+    type: "run", runId, automationId, automationName, sessionId,
+    idempotencyKey, createdAt, prompt: String(prompt).slice(0, 4000),
+  };
+  automations.appendRecord({ ...base, status: "created" });
+  let turnId = null;
+  try {
+    const started = await host.turnStart(sessionId, prompt, {});
+    turnId = started && started.turnId ? started.turnId : null;
+    automations.appendRecord({ ...base, status: "started", turnId });
+  } catch (e) {
+    const failed = { ...base, status: "failed", error: (e && e.message) || "turn start failed" };
+    automations.appendRecord(failed);
+    broadcast("msp", { method: "run/failed", params: failed });
+    return { failed: true, run: failed };
+  }
+  automationTrackRun(runId, sessionId, turnId, automationId, automationName, base.prompt, base.idempotencyKey);
+  const found = automations.listRuns({ limit: 100 }).runs.find((r) => r.runId === runId);
+  return { run: found || { ...base, status: "started", turnId } };
+}
+
+// ---- automation interval scheduler ----
+// Ticks reuse startAutomationRun; one live run per automation at a time
+// (a tick while the previous run is live records "skipped"). Manual
+// triggers bypass the guard deliberately (explicit user intent).
+const SCHED_MIN_MS = 5000;
+const automationTimers = new Map();
+const automationRunning = new Set();
+function schedIntervalMs(def) {
+  return Math.max(SCHED_MIN_MS, Number(def.everyMinutes) * 60000);
+}
+function scheduleAutomation(def) {
+  unscheduleAutomation(def && def.automationId);
+  if (!def || !def.automationId || def.enabled === false) return;
+  automationTimers.set(def.automationId, setInterval(() => void schedulerTick(def.automationId), schedIntervalMs(def)));
+}
+function unscheduleAutomation(automationId) {
+  if (!automationId) return;
+  const t = automationTimers.get(automationId);
+  if (t) {
+    clearInterval(t);
+    automationTimers.delete(automationId);
+  }
+}
+async function schedulerTick(automationId) {
+  let def = null;
+  try {
+    def = automations.getAutomation(automationId);
+  } catch {
+    return;
+  }
+  if (!def || def.enabled === false) {
+    unscheduleAutomation(automationId);
+    return;
+  }
+  if (automationRunning.has(automationId)) {
+    const rec = {
+      type: "run", runId: require("node:crypto").randomUUID(), automationId,
+      automationName: def.name, sessionId: def.sessionId, idempotencyKey: null,
+      createdAt: new Date().toISOString(), prompt: String(def.prompt).slice(0, 4000),
+      status: "skipped", reason: "previous run still active",
+    };
+    try {
+      automations.appendRecord(rec);
+    } catch {
+      /* skip record is observability, not the run itself */
+    }
+    broadcast("msp", { method: "run/skipped", params: rec });
+    return;
+  }
+  automationRunning.add(automationId);
+  const out = await startAutomationRun({
+    sessionId: def.sessionId, prompt: def.prompt, automationId, automationName: def.name,
+  }).catch((e) => ({ failed: true, run: null, error: (e && e.message) || "scheduler tick failed" }));
+  if (out.failed || !out.run || !out.run.turnId) {
+    // Nothing to wait on: release the guard now. Live runs release it in
+    // automationRunEvent when the host reports turn/completed.
+    automationRunning.delete(automationId);
+  }
+}
+try {
+  for (const def of automations.listAutomations()) scheduleAutomation(def);
+} catch {
+  /* a damaged ledger must not prevent boot; runs endpoint still serves */
+}
 app.post("/api/automations", (req, res) => {
   try {
     const { randomUUID } = require("node:crypto");
@@ -560,6 +643,7 @@ app.post("/api/automations", (req, res) => {
       createdAt: new Date().toISOString(),
     };
     automations.saveAutomation(automation);
+    scheduleAutomation(automation);
     res.json({ automation });
   } catch (e) {
     sendError(res, e);
@@ -577,7 +661,41 @@ app.delete("/api/automations/:id", (req, res) => {
     if (!automations.deleteAutomation(req.params.id)) {
       return res.status(404).json({ error: "automation not found" });
     }
+    unscheduleAutomation(req.params.id);
     res.json({ ok: true });
+  } catch (e) {
+    sendError(res, e);
+  }
+});
+app.post("/api/automations/runs/:id/cancel", async (req, res) => {
+  try {
+    const all = automations.readRecords().filter((r) => r && r.type === "run" && r.runId === req.params.id);
+    if (!all.length) return res.status(404).json({ error: "run not found" });
+    const cur = all[all.length - 1];
+    if (["completed", "failed", "cancelled", "skipped"].includes(cur.status)) {
+      return res.status(409).json({ error: `run already ${cur.status}`, run: cur });
+    }
+    const rec = {
+      type: "run", runId: cur.runId, sessionId: cur.sessionId || null,
+      turnId: cur.turnId || null, automationId: cur.automationId || null,
+      automationName: cur.automationName || null, idempotencyKey: cur.idempotencyKey || null,
+      createdAt: new Date().toISOString(), prompt: cur.prompt, status: "cancelled",
+    };
+    automations.appendRecord(rec);
+    // Untrack first so the host's turn/completed(cancelled) cannot overwrite.
+    for (const [tid, t] of automationTurns) {
+      if (t.runId === cur.runId) automationTurns.delete(tid);
+    }
+    if (cur.automationId) automationRunning.delete(cur.automationId);
+    if (cur.sessionId) {
+      try {
+        await host.turnInterrupt(cur.sessionId, cur.turnId || undefined);
+      } catch {
+        /* run is already terminal in the ledger; host best-effort */
+      }
+    }
+    broadcast("msp", { method: "run/cancelled", params: rec });
+    res.json({ run: rec });
   } catch (e) {
     sendError(res, e);
   }
