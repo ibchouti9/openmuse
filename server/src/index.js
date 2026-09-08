@@ -729,6 +729,69 @@ async function schedulerTick(automationId) {
     automationRunning.delete(automationId);
   }
 }
+
+// Mark runs orphaned by a restart (in-memory tracking is gone, so their
+// turns can never complete) as failed. Never resumes unknown turns.
+// Records created after bootISO (this boot's own ticks) are live, not orphans.
+function reconcileOrphanRuns(bootISO) {
+  const latest = new Map();
+  for (const r of automations.readRecords()) {
+    if (r && r.type === "run" && typeof r.runId === "string") latest.set(r.runId, r);
+  }
+  const fixed = [];
+  for (const cur of latest.values()) {
+    if (String(cur.createdAt || "") >= bootISO) continue;
+    if (cur.status === "created" || cur.status === "started") {
+      const rec = { ...cur, createdAt: new Date().toISOString(), status: "failed", error: "server restarted mid-run" };
+      automations.appendRecord(rec);
+      fixed.push(rec);
+    }
+  }
+  if (fixed.length) console.log(`[openmuse] reconciled ${fixed.length} orphan automation run(s)`);
+  return fixed;
+}
+
+// Missed-tick policy against the ledger as found. Default is skip (safe
+// against spend bursts); catchUp:true fires one tick. This boot's own
+// records (reconcile appends, catch-up ticks) are ignored in the scan.
+async function applyMissedTickPolicy(def, bootISO) {
+  if (!def || def.enabled === false) return;
+  const intervalMs = schedIntervalMs(def);
+  let last = null;
+  try {
+    for (const r of automations.readRecords()) {
+      if (String(r && r.createdAt || "") >= bootISO) continue;
+      if (r && r.type === "run" && r.automationId === def.automationId && r.status !== "skipped") {
+        if (!last || String(r.createdAt || "") > String(last)) last = r.createdAt;
+      }
+    }
+  } catch {
+    return;
+  }
+  if (!last) return; // brand-new def: wait for the first cadence
+  const ageMs = Date.now() - Date.parse(last);
+  if (!Number.isFinite(ageMs) || ageMs <= intervalMs) return;
+  if (def.catchUp === true) {
+    console.log(`[openmuse] automation ${def.automationId} missed-tick catch-up firing once`);
+    void schedulerTick(def.automationId);
+  } else {
+    console.log(`[openmuse] automation ${def.automationId} missed-tick skipped (catchUp off)`);
+  }
+}
+
+const BOOT_ISO = new Date().toISOString();
+try {
+  for (const rec of reconcileOrphanRuns(BOOT_ISO)) {
+    broadcast("msp", { method: "run/failed", params: rec });
+  }
+} catch {
+  /* reconcile is hygiene; boot continues */
+}
+try {
+  for (const def of automations.listAutomations()) void applyMissedTickPolicy(def, BOOT_ISO);
+} catch {
+  /* policy evaluation is hygiene; boot continues */
+}
 try {
   for (const def of automations.listAutomations()) scheduleAutomation(def);
 } catch {
