@@ -152,6 +152,18 @@ function outcomeLabel(d: AutomationDef): string {
   return "Never run";
 }
 
+function cadenceLabel(minutes: number): string {
+  if (!Number.isFinite(minutes) || minutes <= 0) return "Manual";
+  if (minutes < 60) return `Every ${minutes} min`;
+  const hours = minutes / 60;
+  if (Number.isInteger(hours)) {
+    if (hours === 1) return "Hourly";
+    if (hours === 24) return "Daily";
+    return `Every ${hours} hours`;
+  }
+  return `Every ${minutes} min`;
+}
+
 export default function AutomationsView({
   onClose,
   loader = loadMockAutomations,
@@ -225,7 +237,7 @@ export default function AutomationsView({
       <div className="automations-header">
         <div>
           <h2 className="automations-title">Automations</h2>
-          <p className="automations-subtitle">Scheduled runs (mock data — step 1)</p>
+          <p className="automations-subtitle">Scheduled prompts that run on their own</p>
         </div>
         <button type="button" className="topbar-icon-btn" onClick={onClose} title="Back to chat" aria-label="Back to chat">
           <CloseIcon size={14} />
@@ -286,7 +298,7 @@ export default function AutomationsView({
               <div className="automation-main">
                 <span className="automation-name">{d.name}</span>
                 <span className="automation-meta font-mono">
-                  every {d.everyMinutes}m · {d.enabled ? "enabled" : "disabled"}
+                  {cadenceLabel(d.everyMinutes)} · {d.enabled ? "enabled" : "disabled"}
                 </span>
                 <span className="automation-prompt">{d.prompt}</span>
               </div>
