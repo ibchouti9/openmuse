@@ -103,6 +103,19 @@ html, body, #root {
   outline-offset: 2px;
 }
 
+/* Visually hidden but announced to screen readers (copy feedback, etc). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 button {
   font-family: inherit;
   border: none;
@@ -3873,6 +3886,8 @@ input, textarea, select {
   }
 }
 
+/* (Small-screen rules live at end of file, after all base rules they override.) */
+
 /* ==========================================================================
    Antigravity-style Minimalist Thinking Block
    ========================================================================== */
@@ -4321,7 +4336,7 @@ textarea.builder-input {
   height: 12px;
   border-radius: var(--radius-xs);
   background: rgba(255, 255, 255, 0.07);
-  animation: cursorBlink 1.2s infinite;
+  animation: cursorBlink 0.8s infinite;
 }
 
 .skeleton-line.short {
@@ -4490,3 +4505,37 @@ textarea.builder-input {
   flex-basis: 100%;
 }
 /* Run outcome pills reuse Lumen's .auto-status-pill tokens (see view). */
+
+/* ==========================================================================
+   Reduced Motion: still the full interface, none of the movement.
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ==========================================================================
+   Small Screens (must stay last: source order beats equal-specificity bases)
+   ========================================================================== */
+@media (max-width: 640px) {
+  .keyboard-shortcut-hint {
+    display: none;
+  }
+  .conversation-thread-scroll {
+    padding: 16px 16px 32px;
+  }
+  .composer-dock-container {
+    padding: 8px 12px 12px;
+  }
+  .automations-view {
+    padding: 20px 16px;
+  }
+  .hero-empty-container {
+    padding: 28px 16px;
+  }
+}
