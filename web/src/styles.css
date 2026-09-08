@@ -615,6 +615,80 @@ input, textarea, select {
   letter-spacing: -0.01em;
 }
 
+/* Automation Status (scheduled runs / bots): dot + word, never color alone. */
+.auto-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.auto-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.auto-status-pill.is-running {
+  color: var(--accent);
+  border-color: rgba(56, 189, 248, 0.35);
+  background: var(--accent-soft);
+}
+
+.auto-status-pill.is-running .auto-status-dot {
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.6);
+  animation: pulseDot 1.4s infinite ease-in-out;
+}
+
+.auto-status-pill.is-due {
+  color: var(--amber);
+  border-color: var(--amber-border);
+  background: var(--amber-soft);
+}
+
+.auto-status-pill.is-due .auto-status-dot {
+  background: var(--amber);
+}
+
+.auto-status-pill.is-ok {
+  color: var(--good);
+  border-color: var(--good-border);
+  background: var(--good-soft);
+}
+
+.auto-status-pill.is-ok .auto-status-dot {
+  background: var(--good);
+}
+
+.auto-status-pill.is-failed {
+  color: var(--bad);
+  border-color: var(--bad-border);
+  background: var(--bad-soft);
+}
+
+.auto-status-pill.is-failed .auto-status-dot {
+  background: var(--bad);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auto-status-pill.is-running .auto-status-dot {
+    animation: none;
+  }
+}
+
 /* Breadcrumb & Session Title */
 .topbar-title-breadcrumb {
   display: flex;
