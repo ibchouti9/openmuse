@@ -1098,7 +1098,13 @@ export default function App() {
           ))}
 
           {sessions.length === 0 && (
-            <p className="session-empty-hint">No chats yet. Start a new conversation.</p>
+            <div className="session-empty-hint">
+              <div className="session-empty-icon" aria-hidden="true">
+                <SparklesIcon size={16} />
+              </div>
+              <p className="session-empty-title">No chats yet</p>
+              <p className="session-empty-desc">Ask below to start your first conversation.</p>
+            </div>
           )}
         </div>
 
