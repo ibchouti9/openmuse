@@ -136,6 +136,22 @@ export function applyItemDelta(item: ThreadItem, field: string, delta: string): 
   return next;
 }
 
+// True when the item snapshot already carries a buffered delta's content.
+// Deltas that arrive before their item/started (stale itemsRef across a
+// synchronous burst) park in pendingDeltas; the later snapshot sometimes
+// already includes them, and re-applying would duplicate text live.
+export function itemCarriesDelta(item: ThreadItem, field: string, delta: string): boolean {
+  if (!delta) return true;
+  if (!field || field === "text") return (item.text || "").includes(delta);
+  if (field === "output") return (item.visibleOutput || "").includes(delta);
+  const m = /^summary\.(\d+)$/.exec(field);
+  if (m) {
+    const part = (item.summary || [])[Number(m[1])] || "";
+    return part.includes(delta);
+  }
+  return false;
+}
+
 // A thinking block is live while any entry is still in progress or is the
 // item currently receiving deltas.
 export function thinkingLive(entries: ThreadItem[], streamingId: string | null): boolean {
