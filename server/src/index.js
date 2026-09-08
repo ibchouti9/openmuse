@@ -681,7 +681,7 @@ app.post("/api/automations/runs/:id/cancel", async (req, res) => {
       type: "run", runId: cur.runId, sessionId: cur.sessionId || null,
       turnId: cur.turnId || null, automationId: cur.automationId || null,
       automationName: cur.automationName || null, idempotencyKey: cur.idempotencyKey || null,
-      createdAt: new Date().toISOString(), prompt: cur.prompt, status: "cancelled",
+      createdAt: new Date().toISOString(), prompt: cur.prompt || null, status: "cancelled",
     };
     automations.appendRecord(rec);
     // Untrack first so the host's turn/completed(cancelled) cannot overwrite.
