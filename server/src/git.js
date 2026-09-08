@@ -51,6 +51,23 @@ function git(cwd, args, opts = {}) {
   return run("git", args, { cwd, ...opts });
 }
 
+// git-diff-tolerant runner: `git diff` exits 1 when differences exist, so
+// exit code 1 still resolves with stdout; anything else rejects.
+function gitDiff(cwd, args, { timeout = 30000 } = {}) {
+  return new Promise((resolve, reject) => {
+    execFile("git", args, { cwd, timeout, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err && err.code !== 1) {
+        const detail = String(stderr || stdout || err.message).trim().slice(0, 2000);
+        const e = new Error(detail || "git diff failed");
+        e.code = err.code;
+        reject(e);
+        return;
+      }
+      resolve(String(stdout || ""));
+    });
+  });
+}
+
 async function toplevel(cwd) {
   try {
     return (await git(cwd, ["rev-parse", "--show-toplevel"])).trim();
@@ -291,4 +308,42 @@ async function pr(workspace, { title, body = "", base = "", draft = false } = {}
   return { ok: true, url };
 }
 
-module.exports = { status, commit, push, pr, generateMessage };
+// Single-file diff for the diffs view. Same exclusion list and byte cap as
+// describeChanges; untracked files diff against /dev/null.
+const DIFF_EXCLUDE = ["package-lock.json", "yarn.lock"];
+
+async function diff(workspace, relPath) {
+  const rel = String(relPath || "").trim();
+  if (!rel) throw new Error("path required");
+  const dir = resolveDir(workspace);
+  const root = await toplevel(dir);
+  if (!root) throw new Error(`not a git repository: ${dir}`);
+  const abs = path.resolve(root, rel);
+  if (abs !== root && !abs.startsWith(root + path.sep)) throw new Error("path outside repository");
+  let st = null;
+  try {
+    st = fs.statSync(abs);
+  } catch {
+    throw new Error(`no such path: ${rel}`);
+  }
+  if (!st.isFile()) throw new Error("not a file");
+  const display = path.relative(root, abs) || rel;
+  if (DIFF_EXCLUDE.some((n) => display === n || display.endsWith(`/${n}`))) {
+    return { path: display, diff: "", truncated: false, excluded: true };
+  }
+  let out = await gitDiff(root, ["diff", "HEAD", "--", display]);
+  if (!out.trim()) {
+    const others = await git(root, ["ls-files", "--others", "--exclude-standard", "--", display]);
+    if (others.split("\n").map((s) => s.trim()).includes(display)) {
+      out = await gitDiff(root, ["diff", "--no-index", "--", "/dev/null", display]);
+    }
+  }
+  let truncated = false;
+  if (out.length > MAX_DIFF_BYTES) {
+    out = `${out.slice(0, MAX_DIFF_BYTES)}\n... (truncated)`;
+    truncated = true;
+  }
+  return { path: display, diff: out, truncated };
+}
+
+module.exports = { status, commit, push, pr, generateMessage, diff };
