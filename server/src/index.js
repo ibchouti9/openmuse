@@ -729,6 +729,69 @@ async function schedulerTick(automationId) {
     automationRunning.delete(automationId);
   }
 }
+
+// Mark runs orphaned by a restart (in-memory tracking is gone, so their
+// turns can never complete) as failed. Never resumes unknown turns.
+// Records created after bootISO (this boot's own ticks) are live, not orphans.
+function reconcileOrphanRuns(bootISO) {
+  const latest = new Map();
+  for (const r of automations.readRecords()) {
+    if (r && r.type === "run" && typeof r.runId === "string") latest.set(r.runId, r);
+  }
+  const fixed = [];
+  for (const cur of latest.values()) {
+    if (String(cur.createdAt || "") >= bootISO) continue;
+    if (cur.status === "created" || cur.status === "started") {
+      const rec = { ...cur, createdAt: new Date().toISOString(), status: "failed", error: "server restarted mid-run" };
+      automations.appendRecord(rec);
+      fixed.push(rec);
+    }
+  }
+  if (fixed.length) console.log(`[openmuse] reconciled ${fixed.length} orphan automation run(s)`);
+  return fixed;
+}
+
+// Missed-tick policy against the ledger as found. Default is skip (safe
+// against spend bursts); catchUp:true fires one tick. This boot's own
+// records (reconcile appends, catch-up ticks) are ignored in the scan.
+async function applyMissedTickPolicy(def, bootISO) {
+  if (!def || def.enabled === false) return;
+  const intervalMs = schedIntervalMs(def);
+  let last = null;
+  try {
+    for (const r of automations.readRecords()) {
+      if (String(r && r.createdAt || "") >= bootISO) continue;
+      if (r && r.type === "run" && r.automationId === def.automationId && r.status !== "skipped") {
+        if (!last || String(r.createdAt || "") > String(last)) last = r.createdAt;
+      }
+    }
+  } catch {
+    return;
+  }
+  if (!last) return; // brand-new def: wait for the first cadence
+  const ageMs = Date.now() - Date.parse(last);
+  if (!Number.isFinite(ageMs) || ageMs <= intervalMs) return;
+  if (def.catchUp === true) {
+    console.log(`[openmuse] automation ${def.automationId} missed-tick catch-up firing once`);
+    void schedulerTick(def.automationId);
+  } else {
+    console.log(`[openmuse] automation ${def.automationId} missed-tick skipped (catchUp off)`);
+  }
+}
+
+const BOOT_ISO = new Date().toISOString();
+try {
+  for (const rec of reconcileOrphanRuns(BOOT_ISO)) {
+    broadcast("msp", { method: "run/failed", params: rec });
+  }
+} catch {
+  /* reconcile is hygiene; boot continues */
+}
+try {
+  for (const def of automations.listAutomations()) void applyMissedTickPolicy(def, BOOT_ISO);
+} catch {
+  /* policy evaluation is hygiene; boot continues */
+}
 try {
   for (const def of automations.listAutomations()) scheduleAutomation(def);
 } catch {
@@ -737,7 +800,7 @@ try {
 app.post("/api/automations", (req, res) => {
   try {
     const { randomUUID } = require("node:crypto");
-    const { name, everyMinutes, sessionId, prompt, enabled = true, webhookUrl = null, timeoutMin = null } = req.body || {};
+    const { name, everyMinutes, sessionId, prompt, enabled = true, webhookUrl = null, timeoutMin = null, catchUp = null } = req.body || {};
     if (typeof name !== "string" || !name.trim()) return res.status(400).json({ error: "name required" });
     // Floor of 1 minute: sub-minute recurrence against a real metered model
     // is a spend hose. The scheduler additionally clamps to 5s internally.
@@ -763,11 +826,15 @@ app.post("/api/automations", (req, res) => {
     if (timeoutMin !== null && (!Number.isFinite(Number(timeoutMin)) || Number(timeoutMin) <= 0)) {
       return res.status(400).json({ error: "timeoutMin must be a positive number" });
     }
+    if (catchUp !== null && typeof catchUp !== "boolean") {
+      return res.status(400).json({ error: "catchUp must be a boolean" });
+    }
     const automation = {
       automationId: randomUUID(), name: name.trim(), everyMinutes: Number(everyMinutes),
       sessionId, prompt: prompt.slice(0, 4000), enabled: enabled !== false,
       webhookUrl: webhookUrl === null ? null : String(webhookUrl),
       timeoutMin: timeoutMin === null ? null : Number(timeoutMin),
+      ...(catchUp === true ? { catchUp: true } : {}),
       createdAt: new Date().toISOString(),
     };
     automations.saveAutomation(automation);
@@ -786,11 +853,85 @@ app.get("/api/automations", (req, res) => {
 });
 app.delete("/api/automations/:id", (req, res) => {
   try {
-    if (!automations.deleteAutomation(req.params.id)) {
+    const live = automations.readRecords().filter((r) => r && r.type === "run" && r.automationId === req.params.id);
+    const lastByRun = new Map();
+    for (const r of live) lastByRun.set(r.runId, r);
+    const pending = [...lastByRun.keys()];
+    if (!automations.deleteAutomation(req.params.id) && pending.length === 0) {
       return res.status(404).json({ error: "automation not found" });
     }
     unscheduleAutomation(req.params.id);
+    // Deterministic end for live runs: cancel rather than orphan.
+    void (async () => {
+      for (const runId of pending) {
+        try {
+          await cancelRun(runId, "def deleted");
+        } catch {
+          /* already terminal; ledger already says so */
+        }
+      }
+    })();
     res.json({ ok: true });
+  } catch (e) {
+    sendError(res, e);
+  }
+});
+app.patch("/api/automations/:id", (req, res) => {
+  try {
+    const cur = automations.getAutomation(req.params.id);
+    if (!cur) return res.status(404).json({ error: "automation not found" });
+    const { name, everyMinutes, sessionId, prompt, enabled, webhookUrl, timeoutMin, catchUp } = req.body || {};
+    const next = { ...cur };
+    if (name !== undefined) {
+      if (typeof name !== "string" || !name.trim()) return res.status(400).json({ error: "name must be a non-empty string" });
+      next.name = name.trim();
+    }
+    if (everyMinutes !== undefined) {
+      if (!Number.isFinite(Number(everyMinutes)) || Number(everyMinutes) < 1) {
+        return res.status(400).json({ error: "everyMinutes must be a number >= 1" });
+      }
+      next.everyMinutes = Number(everyMinutes);
+    }
+    if (sessionId !== undefined) {
+      if (typeof sessionId !== "string" || !sessionId.trim()) return res.status(400).json({ error: "sessionId must be a non-empty string" });
+      next.sessionId = sessionId;
+    }
+    if (prompt !== undefined) {
+      if (typeof prompt !== "string" || !prompt.trim()) return res.status(400).json({ error: "prompt must be a non-empty string" });
+      next.prompt = prompt.slice(0, 4000);
+    }
+    if (enabled !== undefined) next.enabled = enabled !== false;
+    if (webhookUrl !== undefined) {
+      if (webhookUrl !== null) {
+        let ok = false;
+        try {
+          const u = new URL(String(webhookUrl));
+          ok = u.protocol === "http:" || u.protocol === "https:";
+        } catch {
+          ok = false;
+        }
+        if (!ok) return res.status(400).json({ error: "webhookUrl must be an http(s) URL" });
+        next.webhookUrl = String(webhookUrl);
+      } else {
+        next.webhookUrl = null;
+      }
+    }
+    if (timeoutMin !== undefined) {
+      if (timeoutMin !== null && (!Number.isFinite(Number(timeoutMin)) || Number(timeoutMin) <= 0)) {
+        return res.status(400).json({ error: "timeoutMin must be a positive number" });
+      }
+      next.timeoutMin = timeoutMin === null ? null : Number(timeoutMin);
+    }
+    if (catchUp !== undefined) {
+      if (catchUp !== null && typeof catchUp !== "boolean") {
+        return res.status(400).json({ error: "catchUp must be a boolean" });
+      }
+      if (catchUp === null) delete next.catchUp;
+      else next.catchUp = catchUp;
+    }
+    automations.saveAutomation(next);
+    scheduleAutomation(next);
+    res.json({ automation: next });
   } catch (e) {
     sendError(res, e);
   }
