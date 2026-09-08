@@ -1425,7 +1425,8 @@ export default function App() {
               </p>
 
               <div className="hero-starter-grid">
-                <div
+                <button
+                  type="button"
                   className="hero-starter-card"
                   onClick={() => send("Explain this codebase to me: what does it do and where should I start?")}
                 >
@@ -1434,9 +1435,10 @@ export default function App() {
                   </div>
                   <span className="starter-card-title">Explore Codebase</span>
                   <span className="starter-card-desc">Map architecture and trace entrypoints.</span>
-                </div>
+                </button>
 
-                <div
+                <button
+                  type="button"
                   className="hero-starter-card"
                   onClick={() => send("Write a small clean utility script that demonstrates this project's core functionality.")}
                 >
@@ -1445,9 +1447,10 @@ export default function App() {
                   </div>
                   <span className="starter-card-title">Prototype a Script</span>
                   <span className="starter-card-desc">From concept to executed code in one turn.</span>
-                </div>
+                </button>
 
-                <div
+                <button
+                  type="button"
                   className="hero-starter-card"
                   onClick={() => send("Review my latest git changes and suggest architectural improvements or bug fixes.")}
                 >
@@ -1456,7 +1459,7 @@ export default function App() {
                   </div>
                   <span className="starter-card-title">Review Git Diff</span>
                   <span className="starter-card-desc">Thorough code review and verification.</span>
-                </div>
+                </button>
               </div>
 
               {status.lastError && <div className="modal-error-alert">{status.lastError}</div>}
