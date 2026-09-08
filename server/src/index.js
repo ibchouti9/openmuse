@@ -1366,6 +1366,20 @@ app.post("/api/git/pr", async (req, res) => {
     sendError(res, e);
   }
 });
+app.get("/api/git/diff", async (req, res) => {
+  try {
+    const { workspace = "", path: relPath } = req.query;
+    if (typeof relPath !== "string" || !relPath.trim()) {
+      return res.status(400).json({ error: "path required" });
+    }
+    res.json(await gitops.diff(workspace || "", relPath));
+  } catch (e) {
+    if (/required|not a git repository|no such path|not a file|outside repository/i.test(e.message)) {
+      return res.status(400).json({ error: e.message });
+    }
+    sendError(res, e);
+  }
+});
 
 // ---- self-update: rebuild the desktop app from a local checkout ----
 const updater = require("./updater");
