@@ -167,6 +167,37 @@ function validWebhook(raw: string): boolean {
   }
 }
 
+// Minimal scheduler rollup (rev-2 ruling): derived from the defs list only —
+// running if any enabled automation's last run is still live, attention if
+// any enabled last run failed, idle otherwise, unknown while loading. The
+// SSE run/* live feed upgrades this same seam once the hub is testable here.
+export type SchedulerState = "unknown" | "idle" | "running" | "attention";
+
+export function schedulerStateFor(defs: AutomationDef[], loading: boolean): SchedulerState {
+  if (loading) return "unknown";
+  const live = defs.filter((d) => d.enabled);
+  if (live.some((d) => d.lastOutcome === "started")) return "running";
+  if (live.some((d) => d.lastOutcome === "failed")) return "attention";
+  return "idle";
+}
+
+const SCHEDULER_META: Record<SchedulerState, { cls: string; label: string }> = {
+  unknown: { cls: "", label: "Checking scheduler…" },
+  idle: { cls: "", label: "Scheduler idle" },
+  running: { cls: "is-running", label: "Scheduler running" },
+  attention: { cls: "is-failed", label: "Scheduler needs attention" },
+};
+
+export function SchedulerPill({ state }: { state: SchedulerState }) {
+  const meta = SCHEDULER_META[state];
+  return (
+    <span className={`auto-status-pill scheduler-pill ${meta.cls}`} role="status" title={meta.label}>
+      <span className="auto-status-dot" aria-hidden="true" />
+      <span>{meta.label}</span>
+    </span>
+  );
+}
+
 function fmtTime(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -351,6 +382,7 @@ export default function AutomationsView({
         <div>
           <h2 className="automations-title">Automations</h2>
           <p className="automations-subtitle">Scheduled prompts that run on their own</p>
+          <SchedulerPill state={schedulerStateFor(defs, phase === "loading")} />
         </div>
         <div className="automations-header-actions">
           {!builderOpen && phase === "ready" && (
