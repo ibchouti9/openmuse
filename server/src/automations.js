@@ -144,8 +144,117 @@ function deleteAutomation(automationId) {
   return true;
 }
 
+// ---- cron specs (node-cron; lazy-required so a missing install only
+// breaks cron paths, never the whole module) ----
+function getCronLib() {
+  try {
+    return require("node-cron");
+  } catch (e) {
+    throw new Error(`node-cron unavailable: ${e.message}`);
+  }
+}
+
+function validateTz(tz) {
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Validate a cron spec: expression parses, tz (if any) is a real IANA
+// zone, and consecutive fires are >= ~60s apart (spend floor, mirroring
+// the everyMinutes >= 1 rule).
+function validateCronSpec(cron, tz = null) {
+  const lib = getCronLib();
+  const expr = typeof cron === "string" ? cron.trim() : "";
+  if (!expr || !lib.validate(expr)) return { ok: false, error: "cron must be a valid cron expression" };
+  if (tz !== null && tz !== undefined && (typeof tz !== "string" || !validateTz(tz))) {
+    return { ok: false, error: "tz must be a valid IANA timezone" };
+  }
+  let task = null;
+  try {
+    task = lib.schedule(expr, () => {}, { ...(tz ? { timezone: tz } : {}) });
+    const next = task.getNextRuns(2).map((d) => new Date(d).getTime());
+    if (next.length === 2 && Number.isFinite(next[0]) && Number.isFinite(next[1]) && next[1] - next[0] < 55000) {
+      return { ok: false, error: "cron cadence must be >= 60 seconds" };
+    }
+  } catch (e) {
+    return { ok: false, error: `invalid cron spec: ${e.message}` };
+  } finally {
+    try {
+      if (task && typeof task.stop === "function") task.stop();
+    } catch {
+      /* scan task cleanup is best-effort */
+    }
+    try {
+      if (task && typeof task.destroy === "function") task.destroy();
+    } catch {
+      /* ignore */
+    }
+  }
+  return { ok: true, expr };
+}
+
+// Next fire strictly after nowMs, or null.
+function nextCronFireMs(cron, tz, nowMs = Date.now()) {
+  const lib = getCronLib();
+  let task = null;
+  try {
+    task = lib.schedule(String(cron), () => {}, { ...(tz ? { timezone: tz } : {}) });
+    const n = task.getNextRun();
+    const t = n ? new Date(n).getTime() : NaN;
+    return Number.isFinite(t) ? t : null;
+  } finally {
+    try {
+      if (task && typeof task.stop === "function") task.stop();
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (task && typeof task.destroy === "function") task.destroy();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+// Latest scheduled fire in (fromMs, toMs], minute granularity, scanning
+// back at most ~45 days. Null when the schedule is sparser than the cap.
+function cronFireInWindow(cron, tz, fromMs, toMs) {
+  const lib = getCronLib();
+  let task = null;
+  try {
+    task = lib.schedule(String(cron), () => {}, { ...(tz ? { timezone: tz } : {}) });
+    let t = Math.floor(toMs / 60000) * 60000;
+    for (let i = 0; i < 64800 && t > fromMs; i++, t -= 60000) {
+      let hit = false;
+      try {
+        hit = task.match(new Date(t));
+      } catch {
+        return null;
+      }
+      if (hit) return t;
+    }
+    return null;
+  } finally {
+    try {
+      if (task && typeof task.stop === "function") task.stop();
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (task && typeof task.destroy === "function") task.destroy();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 module.exports = {
   appendRecord, readRecords, listRuns, findRunByKey,
   saveAutomation, listAutomations, getAutomation, deleteAutomation,
   maybeRotate, storePath, MAX_LINES,
+  validateTz, validateCronSpec, nextCronFireMs, cronFireInWindow,
 };

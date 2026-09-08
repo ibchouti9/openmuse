@@ -682,6 +682,12 @@ function schedIntervalMs(def) {
 function scheduleAutomation(def) {
   unscheduleAutomation(def && def.automationId);
   if (!def || !def.automationId || def.enabled === false) return;
+  if (def.cron) {
+    // Cron firing lands in the next commit; parking here keeps the cadence
+    // from spinning while making the pending state visible in logs.
+    console.log(`[openmuse] automation ${def.automationId} uses cron (firing not yet wired)`);
+    return;
+  }
   automationTimers.set(def.automationId, setInterval(() => void schedulerTick(def.automationId), schedIntervalMs(def)));
 }
 function unscheduleAutomation(automationId) {
@@ -800,12 +806,24 @@ try {
 app.post("/api/automations", (req, res) => {
   try {
     const { randomUUID } = require("node:crypto");
-    const { name, everyMinutes, sessionId, prompt, enabled = true, webhookUrl = null, timeoutMin = null, catchUp = null } = req.body || {};
+    const { name, everyMinutes, sessionId, prompt, enabled = true, webhookUrl = null, timeoutMin = null, catchUp = null, cron = null, tz = null } = req.body || {};
     if (typeof name !== "string" || !name.trim()) return res.status(400).json({ error: "name required" });
     // Floor of 1 minute: sub-minute recurrence against a real metered model
     // is a spend hose. The scheduler additionally clamps to 5s internally.
-    if (!Number.isFinite(Number(everyMinutes)) || Number(everyMinutes) < 1) {
+    const hasEvery = everyMinutes !== undefined && everyMinutes !== null;
+    const hasCron = cron !== undefined && cron !== null;
+    if (hasEvery && hasCron) return res.status(400).json({ error: "specify exactly one of everyMinutes, cron" });
+    if (!hasEvery && !hasCron) return res.status(400).json({ error: "one of everyMinutes, cron is required" });
+    if (hasEvery && (!Number.isFinite(Number(everyMinutes)) || Number(everyMinutes) < 1)) {
       return res.status(400).json({ error: "everyMinutes must be a number >= 1" });
+    }
+    let cronExpr = null;
+    if (hasCron) {
+      const checked = automations.validateCronSpec(cron, tz ?? null);
+      if (!checked.ok) return res.status(400).json({ error: checked.error });
+      cronExpr = checked.expr;
+    } else if (tz !== null && tz !== undefined) {
+      return res.status(400).json({ error: "tz requires cron" });
     }
     if (typeof sessionId !== "string" || !sessionId.trim()) {
       return res.status(400).json({ error: "sessionId required" });
@@ -830,7 +848,10 @@ app.post("/api/automations", (req, res) => {
       return res.status(400).json({ error: "catchUp must be a boolean" });
     }
     const automation = {
-      automationId: randomUUID(), name: name.trim(), everyMinutes: Number(everyMinutes),
+      automationId: randomUUID(), name: name.trim(),
+      ...(hasEvery ? { everyMinutes: Number(everyMinutes) } : {}),
+      ...(cronExpr ? { cron: cronExpr } : {}),
+      ...(cronExpr && tz ? { tz: String(tz) } : {}),
       sessionId, prompt: prompt.slice(0, 4000), enabled: enabled !== false,
       webhookUrl: webhookUrl === null ? null : String(webhookUrl),
       timeoutMin: timeoutMin === null ? null : Number(timeoutMin),
@@ -880,17 +901,47 @@ app.patch("/api/automations/:id", (req, res) => {
   try {
     const cur = automations.getAutomation(req.params.id);
     if (!cur) return res.status(404).json({ error: "automation not found" });
-    const { name, everyMinutes, sessionId, prompt, enabled, webhookUrl, timeoutMin, catchUp } = req.body || {};
+    const { name, everyMinutes, sessionId, prompt, enabled, webhookUrl, timeoutMin, catchUp, cron, tz } = req.body || {};
     const next = { ...cur };
     if (name !== undefined) {
       if (typeof name !== "string" || !name.trim()) return res.status(400).json({ error: "name must be a non-empty string" });
       next.name = name.trim();
     }
     if (everyMinutes !== undefined) {
-      if (!Number.isFinite(Number(everyMinutes)) || Number(everyMinutes) < 1) {
-        return res.status(400).json({ error: "everyMinutes must be a number >= 1" });
+      if (everyMinutes === null) {
+        delete next.everyMinutes;
+      } else {
+        if (!Number.isFinite(Number(everyMinutes)) || Number(everyMinutes) < 1) {
+          return res.status(400).json({ error: "everyMinutes must be a number >= 1" });
+        }
+        next.everyMinutes = Number(everyMinutes);
       }
-      next.everyMinutes = Number(everyMinutes);
+    }
+    if (cron !== undefined) {
+      if (cron === null) {
+        delete next.cron;
+        delete next.tz;
+      } else {
+        const checked = automations.validateCronSpec(cron, tz !== undefined ? tz : (next.tz ?? null));
+        if (!checked.ok) return res.status(400).json({ error: checked.error });
+        next.cron = checked.expr;
+      }
+    }
+    if (tz !== undefined) {
+      if (tz === null) {
+        delete next.tz;
+      } else {
+        if (!next.cron) return res.status(400).json({ error: "tz requires cron" });
+        const checked = automations.validateCronSpec(next.cron, tz);
+        if (!checked.ok) return res.status(400).json({ error: checked.error });
+        next.tz = String(tz);
+      }
+    }
+    {
+      const hasEvery = next.everyMinutes !== undefined && next.everyMinutes !== null;
+      const hasCron = next.cron !== undefined && next.cron !== null;
+      if (hasEvery && hasCron) return res.status(400).json({ error: "specify exactly one of everyMinutes, cron" });
+      if (!hasEvery && !hasCron) return res.status(400).json({ error: "one of everyMinutes, cron is required" });
     }
     if (sessionId !== undefined) {
       if (typeof sessionId !== "string" || !sessionId.trim()) return res.status(400).json({ error: "sessionId must be a non-empty string" });
