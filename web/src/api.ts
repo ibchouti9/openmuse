@@ -36,6 +36,8 @@ export const ops = {
     api("/api/git/commit", { method: "POST", body: JSON.stringify({ workspace, message, push }) }),
   gitMessage: (workspace: string) =>
     api("/api/git/message", { method: "POST", body: JSON.stringify({ workspace }) }),
+  gitDiff: (workspace: string, path: string) =>
+    api(`/api/git/diff?workspace=${encodeURIComponent(workspace || "")}&path=${encodeURIComponent(path)}`),
   gitPush: (workspace: string) => api("/api/git/push", { method: "POST", body: JSON.stringify({ workspace }) }),
   gitPr: (workspace: string, title: string, body = "", base = "", draft = false) =>
     api("/api/git/pr", { method: "POST", body: JSON.stringify({ workspace, title, body, base, draft }) }),
