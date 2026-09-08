@@ -683,12 +683,38 @@ function scheduleAutomation(def) {
   unscheduleAutomation(def && def.automationId);
   if (!def || !def.automationId || def.enabled === false) return;
   if (def.cron) {
-    // Cron firing lands in the next commit; parking here keeps the cadence
-    // from spinning while making the pending state visible in logs.
-    console.log(`[openmuse] automation ${def.automationId} uses cron (firing not yet wired)`);
+    scheduleCronDef(def);
     return;
   }
   automationTimers.set(def.automationId, setInterval(() => void schedulerTick(def.automationId), schedIntervalMs(def)));
+}
+// Cron firing: one-shot timer to the next fire, re-armed after each tick
+// (no drift accumulation; edits take effect via reschedule on PATCH).
+function scheduleCronDef(def) {
+  let ms = null;
+  try {
+    ms = automations.nextCronFireMs(def.cron, def.tz || null);
+  } catch (e) {
+    console.log(`[openmuse] automation ${def.automationId} cron unschedulable: ${(e && e.message) || e}`);
+    return;
+  }
+  if (!Number.isFinite(ms) || ms <= Date.now()) return;
+  const delay = Math.max(Math.min(ms - Date.now(), 2 ** 31 - 1), 1000);
+  automationTimers.set(
+    def.automationId,
+    setTimeout(() => {
+      automationTimers.delete(def.automationId);
+      void schedulerTick(def.automationId).catch(() => {}).finally(() => {
+        let cur = null;
+        try {
+          cur = automations.getAutomation(def.automationId);
+        } catch {
+          cur = null;
+        }
+        if (cur) scheduleAutomation(cur);
+      });
+    }, delay),
+  );
 }
 function unscheduleAutomation(automationId) {
   if (!automationId) return;
@@ -762,6 +788,10 @@ function reconcileOrphanRuns(bootISO) {
 // records (reconcile appends, catch-up ticks) are ignored in the scan.
 async function applyMissedTickPolicy(def, bootISO) {
   if (!def || def.enabled === false) return;
+  if (def.cron) {
+    void applyCronMissedPolicy(def, bootISO);
+    return;
+  }
   const intervalMs = schedIntervalMs(def);
   let last = null;
   try {
@@ -782,6 +812,41 @@ async function applyMissedTickPolicy(def, bootISO) {
     void schedulerTick(def.automationId);
   } else {
     console.log(`[openmuse] automation ${def.automationId} missed-tick skipped (catchUp off)`);
+  }
+}
+
+// Cron missed-tick: exact past-due check — is there a scheduled fire in
+// (anchor, boot]? Anchor is the latest pre-boot run, ignoring skipped and
+// reconcile-authored records (an orphan's original timestamp anchors, so a
+// hung run still counts as missed work for catchUp defs).
+async function applyCronMissedPolicy(def, bootISO) {
+  let anchor = null;
+  try {
+    for (const r of automations.readRecords()) {
+      if (String((r && r.createdAt) || "") >= bootISO) continue;
+      if (!r || r.type !== "run" || r.automationId !== def.automationId) continue;
+      if (r.status === "skipped" || r.error === "server restarted mid-run") continue;
+      if (!anchor || String(r.createdAt || "") > String(anchor)) anchor = r.createdAt;
+    }
+  } catch {
+    return;
+  }
+  if (!anchor && def.createdAt) anchor = def.createdAt;
+  if (!anchor) return;
+  const anchorMs = Date.parse(anchor);
+  if (!Number.isFinite(anchorMs)) return;
+  let fire = null;
+  try {
+    fire = automations.cronFireInWindow(def.cron, def.tz || null, anchorMs, Date.now());
+  } catch {
+    return;
+  }
+  if (fire === null) return;
+  if (def.catchUp === true) {
+    console.log(`[openmuse] automation ${def.automationId} cron missed-tick catch-up firing once`);
+    void schedulerTick(def.automationId);
+  } else {
+    console.log(`[openmuse] automation ${def.automationId} cron missed-tick skipped (catchUp off)`);
   }
 }
 
