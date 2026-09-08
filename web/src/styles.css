@@ -4270,3 +4270,70 @@ input, textarea, select {
 .automation-switch.on .automation-switch-thumb {
   left: 18px;
 }
+
+.automation-row-wrap {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.automation-row-wrap .automation-row {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.automation-history-btn {
+  flex-shrink: 0;
+  align-self: center;
+  display: inline-flex;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+}
+
+.automation-history-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.automation-history-btn.open svg {
+  transform: rotate(180deg);
+}
+
+.automation-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 16px 12px 16px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 10px;
+  margin: 0 0 2px 0;
+}
+
+.automation-history-loading {
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+}
+
+.automation-run-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.automation-run-meta {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.automation-run-error {
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex-basis: 100%;
+}
+/* Run outcome pills reuse Lumen's .auto-status-pill tokens (see view). */
