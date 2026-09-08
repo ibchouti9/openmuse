@@ -83,7 +83,42 @@ if (MOCK) {
 host.on("notification", (msg) => {
   const params = msg.params || msg;
   broadcast("msp", { method: msg.method || "message", params });
+  automationRunEvent(msg.method, params);
 });
+
+// ---- automation run lifecycle -> SSE + ledger ----
+// Tracks turnId -> run context in memory (one-shot; a restart between start
+// and completion leaves the ledger at "started", which a later reconcile
+// step can heal). Frames reuse the "msp" event name so existing subscribers
+// receive run/* with no client changes.
+const automationTurns = new Map();
+function automationTrackRun(runId, sessionId, turnId, automationId, automationName, prompt = null, idempotencyKey = null) {
+  if (!turnId) return;
+  automationTurns.set(turnId, { runId, sessionId, automationId, automationName, prompt, idempotencyKey });
+  broadcast("msp", { method: "run/started", params: { runId, sessionId, turnId, automationId, automationName } });
+}
+function automationRunEvent(method, params) {
+  if (method !== "turn/completed" || !params || !params.turnId) return;
+  const tracked = automationTurns.get(params.turnId);
+  if (!tracked) return;
+  automationTurns.delete(params.turnId);
+  const terminal = params.terminal || "completed";
+  const status = terminal === "completed" ? "completed" : "failed";
+  const createdAt = new Date().toISOString();
+  const rec = {
+    type: "run", runId: tracked.runId, sessionId: tracked.sessionId,
+    turnId: params.turnId, automationId: tracked.automationId,
+    automationName: tracked.automationName, prompt: tracked.prompt || null,
+    idempotencyKey: tracked.idempotencyKey || null,
+    createdAt, status, terminal,
+  };
+  try {
+    automations.appendRecord(rec);
+  } catch {
+    /* ledger write failure must not kill the event path */
+  }
+  broadcast("msp", { method: status === "completed" ? "run/completed" : "run/failed", params: rec });
+}
 
 function sendError(res, err) {
   const msg = (err && err.message) || "request failed";
@@ -450,6 +485,61 @@ for (const [route, method] of [
     }
   });
 }
+
+// ---- automations (additive; ledger-backed run history) ----
+const automations = require("./automations");
+app.get("/api/automations/runs", (req, res) => {
+  try {
+    const limit = clampInt(req.query.limit, 50, 1, 100);
+    let cursor = req.query.cursor ?? null;
+    if (cursor === "") cursor = null;
+    res.json(automations.listRuns({ limit, cursor }));
+  } catch (e) {
+    sendError(res, e);
+  }
+});
+app.post("/api/automations/runs", async (req, res) => {
+  try {
+    const { randomUUID } = require("node:crypto");
+    const { sessionId, prompt, automationId = null, automationName = null, idempotencyKey = null } = req.body || {};
+    if (typeof sessionId !== "string" || !sessionId.trim()) {
+      return res.status(400).json({ error: "sessionId required" });
+    }
+    if (typeof prompt !== "string" || !prompt.trim()) {
+      return res.status(400).json({ error: "prompt required" });
+    }
+    if (idempotencyKey !== null && (typeof idempotencyKey !== "string" || !idempotencyKey)) {
+      return res.status(400).json({ error: "idempotencyKey must be a non-empty string" });
+    }
+    if (idempotencyKey) {
+      const prior = automations.findRunByKey(idempotencyKey);
+      if (prior) return res.json({ run: prior, deduped: true });
+    }
+    const runId = randomUUID();
+    const createdAt = new Date().toISOString();
+    const base = {
+      type: "run", runId, automationId, automationName, sessionId,
+      idempotencyKey, createdAt, prompt: prompt.slice(0, 4000),
+    };
+    automations.appendRecord({ ...base, status: "created" });
+    let turnId = null;
+    try {
+      const started = await host.turnStart(sessionId, prompt, {});
+      turnId = started && started.turnId ? started.turnId : null;
+      automations.appendRecord({ ...base, status: "started", turnId });
+    } catch (e) {
+      const failed = { ...base, status: "failed", error: (e && e.message) || "turn start failed" };
+      automations.appendRecord(failed);
+      broadcast("msp", { method: "run/failed", params: failed });
+      return res.status(502).json({ run: failed, error: failed.error });
+    }
+    automationTrackRun(runId, sessionId, turnId, automationId, automationName, base.prompt, base.idempotencyKey);
+    const found = automations.listRuns({ limit: 100 }).runs.find((r) => r.runId === runId);
+    res.json({ run: found || { ...base, status: "started" } });
+  } catch (e) {
+    sendError(res, e);
+  }
+});
 
 // ---- CLI-ops parity (shell out to local muse binary) ----
 const cli = require("./cli");
