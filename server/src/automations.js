@@ -47,13 +47,18 @@ function readRecords() {
   return out;
 }
 
-// Newest-first run history page. Cursor is the runId to start after
-// (exclusive); nextCursor is null when the page reaches the end.
+// Newest-first run history page. Lifecycle appends share one runId, so reads
+// dedupe: latest record per runId wins, ordered by createdAt desc. Cursor is
+// the runId to start after (exclusive); nextCursor is null at the end.
 function listRuns({ limit = 50, cursor = null } = {}) {
   const n = Number.isFinite(Number(limit)) ? Math.min(100, Math.max(1, Math.floor(Number(limit)))) : 50;
-  const runs = readRecords()
-    .filter((r) => r && r.type === "run")
-    .reverse();
+  const latest = new Map();
+  for (const r of readRecords()) {
+    if (r && r.type === "run" && typeof r.runId === "string") latest.set(r.runId, r);
+  }
+  const runs = [...latest.values()].sort((a, b) =>
+    String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+  );
   let start = 0;
   if (cursor) {
     const i = runs.findIndex((r) => r.runId === cursor);
@@ -63,4 +68,13 @@ function listRuns({ limit = 50, cursor = null } = {}) {
   return { runs: page, nextCursor: start + n < runs.length ? page[page.length - 1].runId : null };
 }
 
-module.exports = { appendRecord, readRecords, listRuns, storePath, MAX_LINES };
+// Find the latest run carrying an idempotency key (for trigger dedupe).
+function findRunByKey(idempotencyKey) {
+  if (!idempotencyKey) return null;
+  const all = readRecords().filter(
+    (r) => r && r.type === "run" && r.idempotencyKey === idempotencyKey,
+  );
+  return all.length ? all[all.length - 1] : null;
+}
+
+module.exports = { appendRecord, readRecords, listRuns, findRunByKey, storePath, MAX_LINES };

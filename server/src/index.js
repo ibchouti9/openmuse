@@ -463,6 +463,47 @@ app.get("/api/automations/runs", (req, res) => {
     sendError(res, e);
   }
 });
+app.post("/api/automations/runs", async (req, res) => {
+  try {
+    const { randomUUID } = require("node:crypto");
+    const { sessionId, prompt, automationId = null, automationName = null, idempotencyKey = null } = req.body || {};
+    if (typeof sessionId !== "string" || !sessionId.trim()) {
+      return res.status(400).json({ error: "sessionId required" });
+    }
+    if (typeof prompt !== "string" || !prompt.trim()) {
+      return res.status(400).json({ error: "prompt required" });
+    }
+    if (idempotencyKey !== null && (typeof idempotencyKey !== "string" || !idempotencyKey)) {
+      return res.status(400).json({ error: "idempotencyKey must be a non-empty string" });
+    }
+    if (idempotencyKey) {
+      const prior = automations.findRunByKey(idempotencyKey);
+      if (prior) return res.json({ run: prior, deduped: true });
+    }
+    const runId = randomUUID();
+    const createdAt = new Date().toISOString();
+    const base = {
+      type: "run", runId, automationId, automationName, sessionId,
+      idempotencyKey, createdAt, prompt: prompt.slice(0, 4000),
+    };
+    automations.appendRecord({ ...base, status: "created" });
+    try {
+      const started = await host.turnStart(sessionId, prompt, {});
+      automations.appendRecord({
+        ...base, status: "started",
+        turnId: started && started.turnId ? started.turnId : null,
+      });
+    } catch (e) {
+      const failed = { ...base, status: "failed", error: (e && e.message) || "turn start failed" };
+      automations.appendRecord(failed);
+      return res.status(502).json({ run: failed, error: failed.error });
+    }
+    const found = automations.listRuns({ limit: 100 }).runs.find((r) => r.runId === runId);
+    res.json({ run: found || { ...base, status: "started" } });
+  } catch (e) {
+    sendError(res, e);
+  }
+});
 
 // ---- CLI-ops parity (shell out to local muse binary) ----
 const cli = require("./cli");
