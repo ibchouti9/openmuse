@@ -211,14 +211,14 @@ input, textarea, select {
   align-items: center;
   justify-content: space-between;
   padding: 9px 12px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-default);
+  background: var(--bg-surface-raised);
+  border: 1px solid var(--border-hover);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-weight: 600;
   font-size: 13.5px;
   transition: all var(--dur-fast) var(--ease-spring);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-md);
 }
 
 .btn-new-chat:hover {
