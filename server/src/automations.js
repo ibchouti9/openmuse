@@ -34,7 +34,9 @@ function appendRecord(rec) {
 }
 
 // Drop the oldest lines once the file passes maxBytes, keeping the newest
-// keepLines. Atomic swap (tmp + rename) so readers never see a half file.
+// keepLines. The latest record per automationId is always pinned: defs must
+// survive rotation no matter how much run history piles up. Atomic swap
+// (tmp + rename) so readers never see a half file.
 function maybeRotate({ maxBytes = ROTATE_BYTES, keepLines = ROTATE_KEEP_LINES } = {}) {
   let st = null;
   try {
@@ -44,11 +46,22 @@ function maybeRotate({ maxBytes = ROTATE_BYTES, keepLines = ROTATE_KEEP_LINES } 
   }
   if (!st || st.size <= maxBytes) return { rotated: false };
   const all = readRecords();
-  const keep = all.slice(-keepLines);
+  const pinIdx = new Set();
+  const lastSeen = new Map();
+  all.forEach((r, i) => {
+    if (r && r.type === "automation" && typeof r.automationId === "string") lastSeen.set(r.automationId, i);
+  });
+  for (const i of lastSeen.values()) pinIdx.add(i);
+  const rest = all
+    .map((_, i) => i)
+    .filter((i) => !pinIdx.has(i))
+    .slice(-Math.max(0, keepLines - pinIdx.size));
+  const keepIdx = new Set([...pinIdx, ...rest]);
+  const keep = all.filter((_, i) => keepIdx.has(i));
   const tmp = `${storePath()}.tmp`;
   fs.writeFileSync(tmp, keep.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
   fs.renameSync(tmp, storePath());
-  return { rotated: true, kept: keep.length, dropped: all.length - keep.length };
+  return { rotated: true, kept: keep.length, dropped: all.length - keep.length, pinned: pinIdx.size };
 }
 
 // Read all well-formed records, oldest first. Skips blank/corrupt lines so a

@@ -628,8 +628,10 @@ app.post("/api/automations", (req, res) => {
     const { randomUUID } = require("node:crypto");
     const { name, everyMinutes, sessionId, prompt, enabled = true } = req.body || {};
     if (typeof name !== "string" || !name.trim()) return res.status(400).json({ error: "name required" });
-    if (!Number.isFinite(Number(everyMinutes)) || Number(everyMinutes) <= 0) {
-      return res.status(400).json({ error: "everyMinutes must be a positive number" });
+    // Floor of 1 minute: sub-minute recurrence against a real metered model
+    // is a spend hose. The scheduler additionally clamps to 5s internally.
+    if (!Number.isFinite(Number(everyMinutes)) || Number(everyMinutes) < 1) {
+      return res.status(400).json({ error: "everyMinutes must be a number >= 1" });
     }
     if (typeof sessionId !== "string" || !sessionId.trim()) {
       return res.status(400).json({ error: "sessionId required" });
