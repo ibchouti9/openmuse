@@ -382,6 +382,7 @@ export default function AutomationsView({
         <div>
           <h2 className="automations-title">Automations</h2>
           <p className="automations-subtitle">Scheduled prompts that run on their own</p>
+          <SchedulerPill state={schedulerStateFor(defs, phase === "loading")} />
         </div>
         <div className="automations-header-actions">
           {!builderOpen && phase === "ready" && (
