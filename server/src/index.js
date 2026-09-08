@@ -451,6 +451,19 @@ for (const [route, method] of [
   });
 }
 
+// ---- automations (additive; ledger-backed run history) ----
+const automations = require("./automations");
+app.get("/api/automations/runs", (req, res) => {
+  try {
+    const limit = clampInt(req.query.limit, 50, 1, 100);
+    let cursor = req.query.cursor ?? null;
+    if (cursor === "") cursor = null;
+    res.json(automations.listRuns({ limit, cursor }));
+  } catch (e) {
+    sendError(res, e);
+  }
+});
+
 // ---- CLI-ops parity (shell out to local muse binary) ----
 const cli = require("./cli");
 app.get("/api/cli/version", async (req, res) => {
